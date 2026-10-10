@@ -1,0 +1,95 @@
+/*
+ * Article-chain script — প্রতিটা আর্টিকেল পেজে (বা Blogger theme-এ একবার) বসান:
+ *   <script src="https://YOUR-APP/chain.js" async></script>
+ * কোনো ?r= না থাকলে (সাধারণ পাঠক) এটা কিছুই করে না।
+ */
+(function () {
+  var script = document.currentScript;
+  if (!script || !script.src) return;
+  var API = script.src.replace(/chain\.js(\?.*)?$/, '') + 'api/chain-step';
+
+  var q = new URLSearchParams(location.search);
+  var r = q.get('r');
+  try {
+    if (r && /^[a-f0-9]{32}$/.test(r)) sessionStorage.setItem('tma_r', r);
+    else r = sessionStorage.getItem('tma_r');
+  } catch (e) {}
+  if (!r || !/^[a-f0-9]{32}$/.test(r)) return;
+
+  var box = document.createElement('div');
+  box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:#111;color:#fff;' +
+    'font:16px/1.4 system-ui,sans-serif;padding:12px 16px;text-align:center;box-shadow:0 -2px 10px #0006';
+  var btn = document.createElement('button');
+  btn.style.cssText = 'margin-left:10px;padding:9px 16px;border:0;border-radius:8px;background:#f5a623;color:#000;font-weight:700;font-size:16px;cursor:pointer';
+  var msg = document.createElement('span');
+
+  function show(text, withBtn, label, onclick) {
+    msg.textContent = text;
+    box.innerHTML = '';
+    box.appendChild(msg);
+    if (withBtn) { btn.textContent = label; btn.disabled = false; btn.onclick = onclick; box.appendChild(btn); }
+  }
+  function mount() { if (!box.parentNode) document.body.appendChild(box); }
+
+  function call(action) {
+    // text/plain রাখা হয়েছে যাতে browser-এর preflight লাগে না
+    return fetch(API, { method: 'POST', headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ r: r, url: location.href, action: action }) }).then(function (x) { return x.json(); });
+  }
+
+  var timer = null;
+  function countdown(sec, step, total) {
+    var left = sec;
+    clearInterval(timer);
+    function tick() {
+      if (left > 0) { show('আর্টিকেল ' + step + '/' + total + ' — পড়ুন… ' + left + ' সেকেন্ড', false); left--; }
+      else { clearInterval(timer); ready(step, total); }
+    }
+    tick();
+    timer = setInterval(tick, 1000);
+  }
+
+  function ready(step, total) {
+    var last = step === total;
+    show('আর্টিকেল ' + step + '/' + total + ' পড়া শেষ', true, last ? 'কোড নিন' : 'পরের আর্টিকেল ➜', function () {
+      btn.disabled = true;
+      call('complete').then(function (d) {
+        if (d.code) {
+          box.innerHTML = '';
+          var big = document.createElement('div');
+          big.style.cssText = 'font-size:34px;font-weight:800;letter-spacing:6px;color:#ffd166';
+          big.textContent = d.code;
+          var s = document.createElement('div');
+          s.textContent = 'এই কোডটা Mini App-এ গিয়ে বসান (' + d.code_ttl_min + ' মিনিট বৈধ)';
+          box.appendChild(big); box.appendChild(s);
+        } else if (d.next_url) {
+          location.href = d.next_url;
+        } else if (d.error === 'too_early') {
+          countdown(d.wait || 3, step, total);
+        } else {
+          show('কিছু একটা সমস্যা হয়েছে, পেজ রিলোড করুন', false);
+        }
+      }).catch(function () { show('নেটওয়ার্ক সমস্যা, আবার চেষ্টা করুন', true, 'আবার', function () { ready(step, total); }); });
+    });
+  }
+
+  function start() {
+    call('arrive').then(function (d) {
+      if (d.error === 'not_chain_page') return;              // এই পেজ চেইনের অংশ নয়
+      mount();
+      if (d.error === 'out_of_order') {
+        show('আগের আর্টিকেলগুলো ক্রমে পড়তে হবে। আর্টিকেল ' + d.need_step + ' থেকে শুরু করুন।', true, 'যান ➜', function () { location.href = d.go_url; });
+      } else if (d.error === 'run_expired' || d.error === 'run_closed' || d.error === 'bad_run') {
+        show('এই সেশনের মেয়াদ শেষ। Mini App থেকে আবার Article Site চাপুন।', false);
+      } else if (d.error) {
+        return;                                                // অন্য সাইট/নিষ্ক্রিয় ইত্যাদি: চুপ থাকি
+      } else if (d.ready) {
+        ready(d.step, d.total);
+      } else {
+        countdown(d.wait, d.step, d.total);
+      }
+    }).catch(function () {});
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
