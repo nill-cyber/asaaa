@@ -4,7 +4,9 @@ import { db } from "@/lib/firebase";
 import { randomToken } from "@/lib/crypto";
 import { RUN_TTL_MIN } from "@/lib/config";
 import { ArticleSite, Run, urlWithRun } from "@/lib/chain";
-import { ensureUser, MAX_AUTH_AGE_MONEY, UserRecord } from "@/lib/user";
+import { ensureUser, MAX_AUTH_AGE_MONEY } from "@/lib/user";
+import { bump } from "@/lib/log";
+import { HttpError } from "@/lib/auth";
 
 /**
  * "Article Site" বাটন: নতুন run বানায় এবং cooldown-মুক্ত সাইটগুলোর মধ্য থেকে
@@ -13,26 +15,36 @@ import { ensureUser, MAX_AUTH_AGE_MONEY, UserRecord } from "@/lib/user";
 export default route(async (req, res) => {
   const user = authenticate(req, MAX_AUTH_AGE_MONEY);
   await rateLimit(user.id, "start-chain", 10);
-  await ensureUser(user.id);
-
+  const { u } = await ensureUser(user);
   const now = Date.now();
-  const u = (await db().ref(`users/${user.id}`).get()).val() as UserRecord;
+  const wanted = req.body?.siteId ? String(req.body.siteId) : "";
+  if (wanted && !/^[\w-]{1,64}$/.test(wanted)) throw new HttpError(400, "Invalid siteId");
 
   // আগের চলমান run থাকলে সেটাই চালিয়ে যেতে দিই
   if (u.active_run) {
     const token = u.active_run;
     const run = (await db().ref(`runs/${token}`).get()).val() as Run | null;
-    if (run && run.uid === user.id && (run.status === "running" || run.status === "code_issued") && run.expires_at > now) {
-      const site = (await db().ref(`article_sites/${run.site_id}`).get()).val() as ArticleSite | null;
+    const live = run && run.uid === user.id && (run.status === "running" || run.status === "code_issued") && run.expires_at > now;
+    if (live && wanted && run!.site_id !== wanted) {
+      // অন্য সাইট বেছে নিলে আগের চলমান run বাতিল
+      await db().ref(`runs/${token}/status`).set("dead");
+    } else if (live) {
+      const site = (await db().ref(`article_sites/${run!.site_id}`).get()).val() as ArticleSite | null;
       if (site?.is_active && site.urls?.length) {
-        const idx = Math.min(run.step_done, site.urls.length - 1);
-        return void res.json({ success: true, url: urlWithRun(site.urls[idx], token), step: idx + 1, total: run.total, resumed: true });
+        const idx = Math.min(run!.step_done, site.urls.length - 1);
+        return void res.json({ success: true, url: urlWithRun(site.urls[idx], token), step: idx + 1, total: run!.total, resumed: true });
       }
     }
   }
 
   // নতুন সাইট বাছাই
   const sites = ((await db().ref("article_sites").get()).val() || {}) as Record<string, ArticleSite>;
+  if (wanted) {
+    const s = sites[wanted];
+    if (!s || !s.is_active || !s.urls?.length) throw new HttpError(404, "no_site_available");
+    const readyAt = (u.completed_tasks?.[wanted]?.claimed_at || 0) + s.cooldown_minutes * 60000;
+    if (readyAt > now) return void res.status(409).json({ success: false, error: "cooldown", retry_at: readyAt });
+  }
   const ok: string[] = [];
   let nextAt: number | null = null;
   for (const [id, s] of Object.entries(sites)) {
@@ -45,7 +57,7 @@ export default route(async (req, res) => {
     return void res.status(409).json({ success: false, error: "no_site_available", retry_at: nextAt });
   }
 
-  const siteId = ok[Math.floor(Math.random() * ok.length)];
+  const siteId = wanted || ok[Math.floor(Math.random() * ok.length)];
   const site = sites[siteId];
   const token = randomToken();
 
@@ -64,6 +76,7 @@ export default route(async (req, res) => {
   };
   await db().ref(`runs/${token}`).set(run);
   await db().ref(`users/${user.id}/active_run`).set(token);
+  await bump(`stats/sites/${siteId}/started`);
 
   res.json({ success: true, url: urlWithRun(site.urls[0], token), step: 1, total: site.urls.length, resumed: false });
 });

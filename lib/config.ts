@@ -6,7 +6,7 @@ const int = (v: string | undefined, d: number) => {
 };
 
 export const MIN_WITHDRAW = int(process.env.MIN_WITHDRAW, 10000); // কমপক্ষে কত coin
-export const WITHDRAW_METHODS = (process.env.WITHDRAW_METHODS || "bKash,Nagad,Rocket,USDT (TRC20)")
+export const WITHDRAW_METHODS = (process.env.WITHDRAW_METHODS || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);

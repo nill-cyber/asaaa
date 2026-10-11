@@ -4,7 +4,8 @@ import { db } from "@/lib/firebase";
 import { ServerValue } from "firebase-admin/database";
 import { chainCodeHash, safeEqualHex } from "@/lib/crypto";
 import { Run, isToken } from "@/lib/chain";
-import { ensureUser, MAX_AUTH_AGE_MONEY, MAX_FAILED_ATTEMPTS } from "@/lib/user";
+import { bump, flag } from "@/lib/log";
+import { ensureUser, qualifyReferral, MAX_AUTH_AGE_MONEY, MAX_FAILED_ATTEMPTS } from "@/lib/user";
 
 /** শেষ আর্টিকেলে পাওয়া ৬ ডিজিটের কোড দিয়ে reward নেওয়া */
 export default route(async (req, res) => {
@@ -13,7 +14,7 @@ export default route(async (req, res) => {
 
   const code = String(req.body?.inputCode ?? req.body?.code ?? "").trim();
   if (!/^\d{6}$/.test(code)) throw new HttpError(400, "code_must_be_6_digits");
-  await ensureUser(user.id);
+  await ensureUser(user);
 
   const token = (await db().ref(`users/${user.id}/active_run`).get()).val();
   if (!isToken(token)) throw new HttpError(404, "no_active_run");
@@ -68,7 +69,12 @@ export default route(async (req, res) => {
     });
 
   if (out.error) {
-    if (out.error === "locked") await db().ref(`users/${user.id}/active_run`).remove();
+    if (out.error === "wrong_code") await flag(user.id, "bad_codes");
+    if (out.error === "locked") {
+      await flag(user.id, "bad_codes");
+      await flag(user.id, "locked");
+      await db().ref(`users/${user.id}/active_run`).remove();
+    }
     const status = out.error === "wrong_code" || out.error === "locked" ? 400 : 409;
     return void res.status(status).json({
       success: false,
@@ -100,6 +106,8 @@ export default route(async (req, res) => {
     throw new HttpError(500, "credit_failed");
   }
 
+  await bump(`stats/sites/${site_id}/claimed`);
+  await qualifyReferral(user.id);
   const balance = (await db().ref(`users/${user.id}/balance`).get()).val();
   res.json({ success: true, reward, newBalance: balance });
 });

@@ -17,7 +17,21 @@ Telegram Mini App: Tap, **Article Site চেইন** (৫টা আর্টি
 6. **Admin**: **ব্রাউজারে** `https://নাম.vercel.app/admin` খুলুন → `ADMIN_PASSWORD` দিয়ে ঢুকুন (১২ ঘণ্টা লগইন থাকে)। চাইলে `ADMIN_TELEGRAM_IDS` দিয়ে Telegram-এর ভেতর থেকেও ঢোকা যায়।
 7. **Telegram join টাস্ক** দিলে bot-কে ওই চ্যানেলের **Administrator** বানান।
 
-## Admin প্যানেলে কী কী করবেন
+## Admin প্যানেল (v4 — Light UI)
+সাইডবার: **Dashboard** · **Users** (খোঁজা, balance adjust — কারণ বাধ্যতামূলক, Ban) · **Article Sites** (started/finished/claimed) · **Tasks** · **Withdrawals** (ফিল্টার, সার্চ, নোট, CSV) · **Fraud monitor** · **Settings** (Maintenance, Announcement, tap/energy, withdraw চালু-বন্ধ, method যোগ/বাদ, নতুন ইউজারের অপেক্ষা, দৈনিক সীমা) · **Channel check** (bot admin কিনা + ইউজারের verify ব্যর্থতার আসল কারণ) · **Activity log**।
+
+লোগো: `public/logo.png` রাখলে সেটাই সবখানে; না থাকলে `https://iili.io/nMRQttV.png`। নাম বদলাতে env `NEXT_PUBLIC_BRAND`।
+
+## TFUEL ট্যাব (ধাপ ২)
+Admin → **Market & Trading**: Trading master switch (ডিফল্টে বন্ধ), Buy/Sell আলাদা switch, coins per TFUEL, fee %, min/max/দৈনিক সীমা, price override, Deposit ও USDT payout নেটওয়ার্ক যোগ/বাদ। **USDT desk**: deposit-এর TxID chain-এ মিলিয়ে "Approve & credit"; payout নিজে পাঠিয়ে "Mark paid"। দাম আসে CoinGecko → Gate.io → Binance পর পর; ১০ মিনিটের পুরনো হলে trade নিজে থেকে বন্ধ। সার্ভারে কোনো wallet key নেই।
+
+## ধাপ ৩ — Boost, Staking, Daily, Referral, লাইভ চার্ট
+- সব মান user-কে **TFUEL + USDT মূল্য** (BDT নেই) হিসেবে দেখানো হয়। ভেতরে coin পূর্ণসংখ্যা; ১ TFUEL = `coins per TFUEL` (Market & Trading)।
+- **TFUEL ট্যাব**: ১০ সেকেন্ডে লাইভ দাম, চার্টে 24H/7D/30D ও Line/Candles।
+- Admin → **Rewards & Plans**: Daily reward (দিনভিত্তিক), Referral (বন্ধু প্রথম টাস্ক শেষ করলে bonus; Mini App লিংক `https://t.me/বট/অ্যাপ` বসান), Auto-mining সীমা, Boost প্ল্যান, Staking প্ল্যান (দিন, লাভ %, min/max, pool cap)।
+- Staking/Boost শুধু অ্যাপের TFUEL দিয়ে; Staking লাভ নতুন তৈরি TFUEL, তাই % ও pool cap বাজেট দেখে দিন।
+
+## (পুরনো) Admin প্যানেলে কী কী করবেন
 
 **Article সাইট ট্যাব**
 1. *নতুন Article সাইট* ফর্মে: সাইটের নাম, ৫টা আর্টিকেল URL (প্রতি লাইনে একটা, **১ম থেকে শেষ ক্রমে**, সব একই ডোমেইনের, https), reward, cooldown (মিনিট), প্রতি আর্টিকেলে অপেক্ষা (সেকেন্ড)।

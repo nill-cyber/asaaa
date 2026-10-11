@@ -1,7 +1,7 @@
 import { authenticate, HttpError } from "@/lib/auth";
 import { route, rateLimit } from "@/lib/api";
 import { db } from "@/lib/firebase";
-import { ensureUser, newUser, UserRecord, MAX_AUTH_AGE_MONEY } from "@/lib/user";
+import { ensureUser, qualifyReferral, newUser, UserRecord, MAX_AUTH_AGE_MONEY } from "@/lib/user";
 
 /** timer_visit: server-এ মাপা সময় পার হলে পুরস্কার */
 export default route(async (req, res) => {
@@ -14,7 +14,7 @@ export default route(async (req, res) => {
   const task = (await db().ref(`tasks/${taskId}`).get()).val();
   if (!task || task.type !== "timer_visit") throw new HttpError(404, "Task not found");
 
-  await ensureUser(user.id);
+  await ensureUser(user);
 
   let failure: { status: number; msg: string } | null = null;
   const result = await db()
@@ -50,6 +50,7 @@ export default route(async (req, res) => {
     const f = failure as { status: number; msg: string } | null;
     throw new HttpError(f?.status || 400, f?.msg || "Rejected");
   }
+  await qualifyReferral(user.id);
   const u = result.snapshot.val() as UserRecord;
   res.json({ success: true, reward: task.reward, newBalance: u.balance });
 });

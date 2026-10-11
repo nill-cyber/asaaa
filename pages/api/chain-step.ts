@@ -4,6 +4,7 @@ import { rateLimit } from "@/lib/api";
 import { db } from "@/lib/firebase";
 import { chainCodeHash, randomCode } from "@/lib/crypto";
 import { CODE_TTL_MIN } from "@/lib/config";
+import { bump, flag } from "@/lib/log";
 import { ArticleSite, Run, hostOf, isToken, normHost, normUrl, urlWithRun } from "@/lib/chain";
 
 /**
@@ -144,6 +145,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
         return issue();
       });
+
+    if (out.error === "out_of_order") await flag(run.uid, "out_of_order");
+    if (out.code) await bump(`stats/sites/${run.site_id}/finished`);
 
     // ত্রুটিও 200 দিয়ে ফেরত দিই, যাতে chain.js সহজে পড়তে পারে
     return res.json(out);

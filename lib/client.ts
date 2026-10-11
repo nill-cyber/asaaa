@@ -42,22 +42,75 @@ export function openTgLink(url: string) {
   else openLink(url);
 }
 
+/** 1 TFUEL = cpt coin; দেখানো হয় সবসময় TFUEL (দশমিকসহ) ও USDT মূল্য */
+export const tfDecimals = (cpt: number) => Math.min(6, Math.max(0, Math.round(Math.log10(Math.max(1, cpt)))));
+export function fmtTf(coins: number, cpt: number): string {
+  const d = tfDecimals(cpt);
+  return (coins / cpt).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+export function fmtUsd(v: number): string {
+  if (!v) return "$0.00";
+  if (v < 0.01) return "<$0.01";
+  return "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 const ERR: Record<string, string> = {
-  no_site_available: "এখন কোনো সাইট খালি নেই, পরে চেষ্টা করুন",
-  no_active_run: "আগে Article Site চাপুন",
-  finish_articles_first: "আগে সব আর্টিকেল ক্রমে পড়ে কোড নিন",
-  code_expired: "কোডের মেয়াদ শেষ। শেষ আর্টিকেলে গিয়ে আবার \"কোড নিন\" চাপুন",
-  wrong_code: "কোড ভুল",
-  locked: "বেশি ভুল হয়েছে, নতুন করে Article Site চাপুন",
-  already_claimed: "এই কোড আগেই ব্যবহার হয়েছে",
-  code_must_be_6_digits: "৬ ডিজিটের কোড দিন",
-  below_minimum: "ন্যূনতম পরিমাণের কম",
-  insufficient: "যথেষ্ট coin নেই",
-  bad_method: "পদ্ধতি বেছে নিন",
-  bad_account: "অ্যাকাউন্ট নম্বর দিন",
+  no_site_available: "No article site is available right now. Please try again later.",
+  cooldown: "This site isn't ready yet. Try another one or come back later.",
+  no_active_run: "Start an article site first.",
+  finish_articles_first: "Read all the articles in order to get your code.",
+  code_expired: "That code has expired. Go to the last article and get a new one.",
+  wrong_code: "Wrong code. Please check and try again.",
+  locked: "Too many wrong attempts. Please start the site again.",
+  already_claimed: "This code has already been used.",
+  code_must_be_6_digits: "Enter the 6-digit code.",
+  below_minimum: "Amount is below the minimum.",
+  insufficient: "You don't have enough TFUEL.",
+  bad_method: "Choose a withdrawal method.",
+  bad_account: "Enter your account or wallet address.",
+  verify_unavailable: "We couldn't check this right now. Please try again in a little while.",
+  not_joined: "We couldn't confirm you've joined yet. Join the channel, then tap Verify again.",
+  account_banned: "Your account has been suspended.",
+  maintenance: "We're making improvements. Please check back soon.",
+  withdraw_disabled: "Withdrawals are temporarily paused.",
+  too_new: "New accounts can withdraw after a short waiting period.",
+  daily_limit: "You've reached today's withdrawal limit.",
+  trade_disabled: "Trading is currently paused.",
+  trade_side_disabled: "This type of trade is currently unavailable.",
+  price_unavailable: "Live price is temporarily unavailable. Please try again shortly.",
+  price_changed: "The price just moved. Please review and try again.",
+  bad_amount: "Enter a valid amount.",
+  below_min_trade: "Amount is below the minimum per trade.",
+  above_max_trade: "Amount is above the maximum per trade.",
+  daily_trade_limit: "You've reached today's trading limit.",
+  insufficient_usdt: "You don't have enough USDT.",
+  deposit_disabled: "Deposits are temporarily unavailable.",
+  bad_network: "Choose a network.",
+  bad_txid: "That transaction ID doesn't look right.",
+  below_min_deposit: "Amount is below the minimum deposit for this network.",
+  txid_used: "This transaction ID has already been submitted.",
+  too_many_pending: "You have too many deposits waiting for review.",
+  bad_address: "That wallet address isn't valid for this network.",
+  below_min_usdt: "Amount is below the minimum withdrawal.",
+  withdraw_failed: "Something went wrong. Your balance was not changed.",
+  boost_active: "This boost is already active.",
+  plan_unavailable: "This plan is no longer available.",
+  nothing_to_collect: "Nothing to collect yet.",
+  bad_stake_amount: "Amount is outside this plan's limits.",
+  pool_full: "This staking plan is full right now.",
+  too_many_stakes: "You have too many active stakes.",
+  stake_not_ready: "This stake hasn't matured yet.",
+  already_claimed_today: "You've already claimed today's reward.",
+  daily_disabled: "Daily rewards are paused.",
+  "Too fast": "Slow down a little.",
+  "Not enough energy": "Out of energy. It refills over time.",
+  "Too many requests": "Too many requests. Please wait a moment.",
+  "Already claimed": "You've already claimed this reward.",
+  "Too early": "Please wait a bit longer.",
+  "Session expired, reopen the app": "Session expired. Please reopen the app.",
 };
 
-/** ত্রুটির কোড → বাংলা বার্তা */
+/** error code → friendly English message */
 export function errText(e: any): string {
-  return ERR[e?.message] || e?.message || "সমস্যা হয়েছে";
+  return ERR[e?.message] || "Something went wrong. Please try again.";
 }

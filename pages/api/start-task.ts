@@ -14,7 +14,7 @@ export default route(async (req, res) => {
   const task = (await db().ref(`tasks/${taskId}`).get()).val();
   if (!task || task.type !== "timer_visit") throw new HttpError(404, "Task not found");
 
-  await ensureUser(user.id);
+  await ensureUser(user);
 
   const done = (await db().ref(`users/${user.id}/completed_tasks/${taskId}/claimed`).get()).val();
   if (done) throw new HttpError(409, "Already completed");

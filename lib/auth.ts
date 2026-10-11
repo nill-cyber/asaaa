@@ -14,6 +14,7 @@ export interface TgUser {
   id: string;
   first_name?: string;
   username?: string;
+  start_param?: string;
 }
 
 /**
@@ -61,7 +62,7 @@ export function authenticate(req: NextApiRequest, maxAgeSec = 24 * 3600): TgUser
   }
   if (!user?.id) throw new HttpError(401, "No user");
 
-  return { id: String(user.id), first_name: user.first_name, username: user.username };
+  return { id: String(user.id), first_name: user.first_name, username: user.username, start_param: params.get("start_param") || undefined };
 }
 
 export function requireAdmin(req: NextApiRequest): TgUser {

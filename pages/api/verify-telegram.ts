@@ -1,7 +1,8 @@
 import { authenticate, HttpError } from "@/lib/auth";
 import { route, rateLimit } from "@/lib/api";
 import { db } from "@/lib/firebase";
-import { ensureUser, newUser, UserRecord, MAX_AUTH_AGE_MONEY } from "@/lib/user";
+import { ensureUser, qualifyReferral, newUser, UserRecord, MAX_AUTH_AGE_MONEY } from "@/lib/user";
+import { tgCall } from "@/lib/telegram";
 
 const OK_STATUSES = new Set(["member", "administrator", "creator"]);
 
@@ -16,18 +17,22 @@ export default route(async (req, res) => {
   const task = (await db().ref(`tasks/${taskId}`).get()).val();
   if (!task || task.type !== "telegram_join") throw new HttpError(404, "Task not found");
 
-  await ensureUser(user.id);
+  await ensureUser(user);
 
   const already = (await db().ref(`users/${user.id}/completed_tasks/${taskId}/claimed`).get()).val();
   if (already) throw new HttpError(409, "Already claimed");
 
-  const url =
-    `https://api.telegram.org/bot${process.env.BOT_TOKEN}/getChatMember` +
-    `?chat_id=${encodeURIComponent(task.channel_id)}&user_id=${encodeURIComponent(user.id)}`;
-  const tg = await fetch(url).then((r) => r.json()).catch(() => null);
+  const tg = await tgCall("getChatMember", { chat_id: task.channel_id, user_id: user.id });
 
-  if (!tg?.ok) throw new HttpError(502, "Could not verify. Is the bot an admin of the channel?");
-  if (!OK_STATUSES.has(tg.result?.status)) throw new HttpError(403, "You have not joined yet");
+  if (!tg.ok) {
+    // আসল কারণ শুধু admin-এর জন্য সংরক্ষিত (Admin → Channel check); user-কে সাধারণ বার্তা
+    await db()
+      .ref(`diagnostics/telegram/${taskId}`)
+      .set({ at: Date.now(), channel: task.channel_id, title: task.title || "", reason: String(tg.description || "unknown") })
+      .catch(() => {});
+    throw new HttpError(502, "verify_unavailable");
+  }
+  if (!OK_STATUSES.has(tg.result?.status)) throw new HttpError(403, "not_joined");
 
   let failure = false;
   const result = await db()
@@ -46,6 +51,7 @@ export default route(async (req, res) => {
     });
 
   if (!result.committed || failure) throw new HttpError(409, "Already claimed");
+  await qualifyReferral(user.id);
   const u = result.snapshot.val() as UserRecord;
   res.json({ success: true, reward: task.reward, newBalance: u.balance });
 });

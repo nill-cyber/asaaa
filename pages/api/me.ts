@@ -1,22 +1,35 @@
 import { authenticate } from "@/lib/auth";
 import { route } from "@/lib/api";
 import { db } from "@/lib/firebase";
-import { ensureUser, currentEnergy, UserRecord } from "@/lib/user";
+import { ensureUser, currentEnergy, effective } from "@/lib/user";
 import { ArticleSite, Run } from "@/lib/chain";
-import { COINS_PER_UNIT, MIN_WITHDRAW, UNIT_LABEL, WITHDRAW_METHODS } from "@/lib/config";
+import { peekPrice } from "@/lib/market";
+import { dayKey } from "@/lib/log";
 
-/** Mini App খুললে প্রথম call: user state + task তালিকা + চলমান run + withdraw ইতিহাস (গোপন কিছু ছাড়া) */
+/** Mini App খুললে প্রথম call: user state + task + article card + চলমান run + withdraw ইতিহাস (গোপন কিছু ছাড়া) */
 export default route(async (req, res) => {
   const user = authenticate(req);
-  await ensureUser(user.id);
-
-  const [uSnap, tSnap, sSnap] = await Promise.all([
-    db().ref(`users/${user.id}`).get(),
-    db().ref("tasks").get(),
-    db().ref("article_sites").get(),
-  ]);
-  const u = uSnap.val() as UserRecord;
+  const { u, settings } = await ensureUser(user, { soft: true, touch: true });
   const now = Date.now();
+
+  const cfg = {
+    minWithdraw: settings.min_withdraw,
+    methods: settings.withdraw_methods,
+    coinsPerUnit: settings.coins_per_unit,
+    unitLabel: settings.unit_label,
+    withdrawEnabled: settings.withdraw_enabled,
+    earnPerTap: settings.earn_per_tap,
+    coinsPerTfuel: settings.coins_per_tfuel,
+  };
+  const announcement =
+    settings.announcement.enabled && settings.announcement.text ? settings.announcement : null;
+
+  if (u.banned) return void res.json({ success: true, banned: true, cfg });
+  if (settings.maintenance) {
+    return void res.json({ success: true, maintenance: true, message: settings.maintenance_msg, cfg });
+  }
+
+  const [tSnap, sSnap] = await Promise.all([db().ref("tasks").get(), db().ref("article_sites").get()]);
 
   const tasks = Object.entries((tSnap.val() || {}) as Record<string, any>).map(([id, t]) => ({
     id,
@@ -33,41 +46,54 @@ export default route(async (req, res) => {
     done: !!u.completed_tasks?.[id]?.claimed,
   }));
 
-  // এখন কয়টা আর্টিকেল-সাইট খালি (cooldown শেষ)
-  let sitesAvailable = 0;
-  for (const [id, s] of Object.entries((sSnap.val() || {}) as Record<string, ArticleSite>)) {
-    if (!s.is_active || !s.urls?.length) continue;
-    const readyAt = (u.completed_tasks?.[id]?.claimed_at || 0) + s.cooldown_minutes * 60000;
-    if (readyAt <= now) sitesAvailable++;
-  }
-
   // চলমান run
-  let run: { step_done: number; total: number; status: string } | null = null;
+  let run: { site_id: string; step_done: number; total: number; status: string } | null = null;
   if (u.active_run) {
     const r = (await db().ref(`runs/${u.active_run}`).get()).val() as Run | null;
     if (r && r.uid === user.id && (r.status === "running" || r.status === "code_issued") && r.expires_at > now) {
-      run = { step_done: r.step_done, total: r.total, status: r.status };
+      run = { site_id: r.site_id, step_done: r.step_done, total: r.total, status: r.status };
     }
   }
+
+  // Article Site কার্ড (Tasks ট্যাবে দেখানো হয়)
+  const sites = Object.entries((sSnap.val() || {}) as Record<string, ArticleSite>)
+    .filter(([, s]) => s.is_active && s.urls?.length)
+    .map(([id, s]) => ({
+      id,
+      name: s.name,
+      reward: s.reward,
+      cooldown_minutes: s.cooldown_minutes,
+      total: s.urls.length,
+      ready_at: Math.max(0, (u.completed_tasks?.[id]?.claimed_at || 0) + s.cooldown_minutes * 60000),
+      in_progress: run?.site_id === id,
+    }))
+    .sort((a, b) => Number(a.ready_at > now) - Number(b.ready_at > now) || a.name.localeCompare(b.name));
 
   const withdrawals = Object.entries(u.withdrawals || {})
     .sort(([a], [b]) => (a < b ? 1 : -1))
     .slice(0, 20)
     .map(([id, w]) => ({ id, amount: w.amount, method: w.method, status: w.status, created_at: w.created_at }));
 
+  const eff = effective(u, settings);
+  const price = await peekPrice(settings);
   res.json({
     success: true,
     user: {
       id: user.id,
       name: user.first_name,
       balance: u.balance,
-      energy: Math.floor(currentEnergy(u)),
-      maxEnergy: u.max_energy,
+      energy: Math.floor(currentEnergy(eff)),
+      maxEnergy: eff.max_energy,
+      regen: eff.energy_regen_rate,
+      perTap: eff.earn_per_tap,
     },
     tasks,
+    sites,
     run,
-    sitesAvailable,
     withdrawals,
-    cfg: { minWithdraw: MIN_WITHDRAW, methods: WITHDRAW_METHODS, coinsPerUnit: COINS_PER_UNIT, unitLabel: UNIT_LABEL },
+    announcement,
+    price,
+    dailyReady: settings.daily_enabled && u.daily?.day !== dayKey(now),
+    cfg,
   });
 });

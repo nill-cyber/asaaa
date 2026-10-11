@@ -42,7 +42,7 @@
     var left = sec;
     clearInterval(timer);
     function tick() {
-      if (left > 0) { show('আর্টিকেল ' + step + '/' + total + ' — পড়ুন… ' + left + ' সেকেন্ড', false); left--; }
+      if (left > 0) { show('Article ' + step + '/' + total + ' — keep reading… ' + left + 's', false); left--; }
       else { clearInterval(timer); ready(step, total); }
     }
     tick();
@@ -51,7 +51,7 @@
 
   function ready(step, total) {
     var last = step === total;
-    show('আর্টিকেল ' + step + '/' + total + ' পড়া শেষ', true, last ? 'কোড নিন' : 'পরের আর্টিকেল ➜', function () {
+    show('Article ' + step + '/' + total + ' complete', true, last ? 'Get my code' : 'Next article ➜', function () {
       btn.disabled = true;
       call('complete').then(function (d) {
         if (d.code) {
@@ -60,16 +60,16 @@
           big.style.cssText = 'font-size:34px;font-weight:800;letter-spacing:6px;color:#ffd166';
           big.textContent = d.code;
           var s = document.createElement('div');
-          s.textContent = 'এই কোডটা Mini App-এ গিয়ে বসান (' + d.code_ttl_min + ' মিনিট বৈধ)';
+          s.textContent = 'Enter this code in the Mini App (valid for ' + d.code_ttl_min + ' minutes)';
           box.appendChild(big); box.appendChild(s);
         } else if (d.next_url) {
           location.href = d.next_url;
         } else if (d.error === 'too_early') {
           countdown(d.wait || 3, step, total);
         } else {
-          show('কিছু একটা সমস্যা হয়েছে, পেজ রিলোড করুন', false);
+          show('Something went wrong. Please reload the page.', false);
         }
-      }).catch(function () { show('নেটওয়ার্ক সমস্যা, আবার চেষ্টা করুন', true, 'আবার', function () { ready(step, total); }); });
+      }).catch(function () { show('Network problem. Please try again.', true, 'Retry', function () { ready(step, total); }); });
     });
   }
 
@@ -78,9 +78,9 @@
       if (d.error === 'not_chain_page') return;              // এই পেজ চেইনের অংশ নয়
       mount();
       if (d.error === 'out_of_order') {
-        show('আগের আর্টিকেলগুলো ক্রমে পড়তে হবে। আর্টিকেল ' + d.need_step + ' থেকে শুরু করুন।', true, 'যান ➜', function () { location.href = d.go_url; });
+        show('Please read the articles in order. Start from article ' + d.need_step + '.', true, 'Go ➜', function () { location.href = d.go_url; });
       } else if (d.error === 'run_expired' || d.error === 'run_closed' || d.error === 'bad_run') {
-        show('এই সেশনের মেয়াদ শেষ। Mini App থেকে আবার Article Site চাপুন।', false);
+        show('This session has expired. Please start the article site again from the Mini App.', false);
       } else if (d.error) {
         return;                                                // অন্য সাইট/নিষ্ক্রিয় ইত্যাদি: চুপ থাকি
       } else if (d.ready) {
