@@ -17,6 +17,11 @@ Telegram Mini App: Tap, **Article Site চেইন** (৫টা আর্টি
 6. **Admin**: **ব্রাউজারে** `https://নাম.vercel.app/admin` খুলুন → `ADMIN_PASSWORD` দিয়ে ঢুকুন (১২ ঘণ্টা লগইন থাকে)। চাইলে `ADMIN_TELEGRAM_IDS` দিয়ে Telegram-এর ভেতর থেকেও ঢোকা যায়।
 7. **Telegram join টাস্ক** দিলে bot-কে ওই চ্যানেলের **Administrator** বানান।
 
+## Admin প্যানেল (v4 — Light UI)
+সাইডবার: **Dashboard** · **Users** (খোঁজা, balance adjust — কারণ বাধ্যতামূলক, Ban) · **Article Sites** (started/finished/claimed) · **Tasks** · **Withdrawals** (ফিল্টার, সার্চ, নোট, CSV) · **Fraud monitor** · **Settings** (Maintenance, Announcement, tap/energy, withdraw চালু-বন্ধ, method যোগ/বাদ, নতুন ইউজারের অপেক্ষা, দৈনিক সীমা) · **Channel check** (bot admin কিনা + ইউজারের verify ব্যর্থতার আসল কারণ) · **Activity log**।
+
+লোগো: `public/logo.png` রাখলে সেটাই সবখানে; না থাকলে `https://iili.io/nMRQttV.png`। নাম বদলাতে env `NEXT_PUBLIC_BRAND`।
+
 ## TFUEL ট্যাব (ধাপ ২)
 Admin → **Market & Trading**: Trading master switch (ডিফল্টে বন্ধ), Buy/Sell আলাদা switch, coins per TFUEL, fee %, min/max/দৈনিক সীমা, price override, Deposit ও USDT payout নেটওয়ার্ক যোগ/বাদ। **USDT desk**: deposit-এর TxID chain-এ মিলিয়ে "Approve & credit"; payout নিজে পাঠিয়ে "Mark paid"। দাম আসে CoinGecko → Gate.io → Binance পর পর; ১০ মিনিটের পুরনো হলে trade নিজে থেকে বন্ধ। সার্ভারে কোনো wallet key নেই।
 
