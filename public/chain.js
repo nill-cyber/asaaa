@@ -34,22 +34,56 @@
   function call(action) {
     // text/plain রাখা হয়েছে যাতে browser-এর preflight লাগে না
     return fetch(API, { method: 'POST', headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ r: r, url: location.href, action: action }) }).then(function (x) { return x.json(); });
+      body: JSON.stringify({ r: r, url: location.href, action: action, scrolled: scrolled }) }).then(function (x) { return x.json(); });
+  }
+
+  // পাঠককে নিচ পর্যন্ত scroll করতে হবে (সময় পার + scroll শেষ — দুটোই লাগে)
+  var scrolled = false, timeDone = false, cur = null;
+  function atBottom() {
+    var d = document.documentElement, b = document.body;
+    var h = Math.max(d.scrollHeight, b ? b.scrollHeight : 0);
+    var y = window.pageYOffset || d.scrollTop || 0;
+    return window.innerHeight + y >= h - 180;
+  }
+  function onScroll() {
+    if (scrolled) return;
+    if (atBottom()) {
+      scrolled = true;
+      window.removeEventListener('scroll', onScroll);
+      if (timeDone && cur) ready(cur.step, cur.total);
+    }
+  }
+  function watchScroll() {
+    if (document.body) document.body.style.paddingBottom = '90px'; // নিচের বার যেন লেখা ঢেকে না দেয়
+    window.addEventListener('scroll', onScroll, { passive: true });
+    setTimeout(onScroll, 300); // ছোট পেজ: scroll-এর দরকারই নেই
   }
 
   var timer = null;
   function countdown(sec, step, total) {
     var left = sec;
+    cur = { step: step, total: total };
+    timeDone = false;
     clearInterval(timer);
     function tick() {
-      if (left > 0) { show('Article ' + step + '/' + total + ' — keep reading… ' + left + 's', false); left--; }
-      else { clearInterval(timer); ready(step, total); }
+      if (left > 0) {
+        show('Article ' + step + '/' + total + ' — keep reading… ' + left + 's' + (scrolled ? '' : ' · scroll down to the end ⬇'), false);
+        left--;
+      } else {
+        clearInterval(timer);
+        timeDone = true;
+        if (scrolled) ready(step, total);
+        else show('Article ' + step + '/' + total + ' — scroll down to the end of the article to continue ⬇', false);
+      }
     }
     tick();
     timer = setInterval(tick, 1000);
   }
 
   function ready(step, total) {
+    cur = { step: step, total: total };
+    timeDone = true;
+    if (!scrolled) { show('Article ' + step + '/' + total + ' — scroll down to the end of the article to continue ⬇', false); return; }
     var last = step === total;
     show('Article ' + step + '/' + total + ' complete', true, last ? 'Get my code' : 'Next article ➜', function () {
       btn.disabled = true;
@@ -77,6 +111,7 @@
     call('arrive').then(function (d) {
       if (d.error === 'not_chain_page') return;              // এই পেজ চেইনের অংশ নয়
       mount();
+      watchScroll();
       if (d.error === 'out_of_order') {
         show('Please read the articles in order. Start from article ' + d.need_step + '.', true, 'Go ➜', function () { location.href = d.go_url; });
       } else if (d.error === 'run_expired' || d.error === 'run_closed' || d.error === 'bad_run') {
