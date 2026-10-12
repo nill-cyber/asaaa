@@ -3,6 +3,7 @@ import { ServerValue } from "firebase-admin/database";
 import { HttpError, TgUser } from "./auth";
 import { getSettings, Settings } from "./settings";
 import { dayKey } from "./log";
+import { earn, activity, lbAdd } from "./wallet";
 
 export const MAX_BATCH_LIMIT = 50; // এক request-এ সর্বোচ্চ tap
 export const MAX_TAPS_PER_SEC = 15; // সর্বোচ্চ tap/sec
@@ -43,12 +44,13 @@ export function settleMining(cur: UserRecord, capHours: number, now = Date.now()
   }
   const amt = Math.floor(total);
   cur.balance += amt;
+  earn(cur, "mining", amt);
   cur.mine_at = now;
   return amt;
 }
 
 export function pendingMining(cur: UserRecord, capHours: number, now = Date.now()): { amount: number; perHour: number } {
-  const copy = { ...cur, balance: 0 } as UserRecord;
+  const copy = { ...cur, balance: 0, earn: undefined } as UserRecord;
   const amount = settleMining(copy, capHours, now);
   let perHour = 0;
   for (const b of Object.values(cur.boosts || {})) if (boostActive(b, now)) perHour += b.mph || 0;
@@ -60,6 +62,9 @@ export interface UserRecord {
   username?: string;
   created_at?: number;
   last_seen?: number;
+  earn?: Record<string, number>;
+  spent?: Record<string, number>;
+  usdt_tot?: Record<string, number>;
   usdt_u?: number; // USDT ব্যালেন্স, micro-USDT (১ USDT = 1,000,000) — float ভুল এড়াতে
   trade_day?: { day: string; u: number };
   boosts?: Record<string, Boost>;
@@ -76,6 +81,14 @@ export interface UserRecord {
   energy: number;
   max_energy: number;
   energy_regen_rate: number;
+  spin?: { day: string; used: number; extra: number };
+  ads?: { day: string; coins: number; energy: number; spin: number; nonce?: string; ns?: number; p?: string; srv?: number };
+  promos?: Record<string, number>;
+  notify_off?: boolean;
+  ord_open?: number;
+  orders?: Record<string, any>;
+  alerts?: Record<string, any>;
+  empty_at?: number | null; // energy শেষ যখন খালি হয়েছিল
   earn_per_tap: number;
   last_energy_calc_time: number;
   last_tap_time: number;
@@ -102,7 +115,9 @@ export function newUser(now = Date.now()): UserRecord {
   };
 }
 
-export function currentEnergy(u: UserRecord, now = Date.now()): number {
+/** খালি হওয়ার refillHours ঘণ্টা পর পুরো ভরে; এর আগে শুধু (থাকলে) ধীর regen */
+export function currentEnergy(u: UserRecord, now = Date.now(), refillHours = 0): number {
+  if (refillHours > 0 && u.empty_at && now >= u.empty_at + refillHours * 3600000) return u.max_energy;
   const deltaSec = Math.max(0, (now - u.last_energy_calc_time) / 1000);
   return Math.min(u.max_energy, u.energy + deltaSec * u.energy_regen_rate);
 }
@@ -188,6 +203,7 @@ export async function qualifyReferral(uid: string) {
         if (cur.ref_paid || !cur.referred_by) return;
         cur.ref_paid = true;
         cur.balance += s.invitee_bonus;
+        earn(cur, "referral", s.invitee_bonus);
         first = true;
         return cur;
       });
@@ -201,11 +217,16 @@ export async function qualifyReferral(uid: string) {
         if (cur === null) return cur;
         if ((cur.ref_count || 0) >= s.referral_max) return;
         cur.balance += s.referrer_bonus;
+        earn(cur, "referral", s.referrer_bonus);
         cur.ref_count = (cur.ref_count || 0) + 1;
         cur.ref_earned = (cur.ref_earned || 0) + s.referrer_bonus;
         paid = s.referrer_bonus;
         return cur;
       });
+    await lbAdd(uid, s.invitee_bonus);
+    await lbAdd(refId, paid);
+    await activity(uid, "referral", { coins: s.invitee_bonus, note: "Welcome bonus" });
+    if (paid) await activity(refId, "referral", { coins: paid, note: `${u.name || "A friend"} joined` });
     await db()
       .ref(`referrals/${refId}/${uid}`)
       .set({ name: u.name || "User", at: Date.now(), bonus: paid });

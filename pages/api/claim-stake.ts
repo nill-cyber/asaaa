@@ -2,6 +2,8 @@ import { authenticate, HttpError } from "@/lib/auth";
 import { route, rateLimit } from "@/lib/api";
 import { db } from "@/lib/firebase";
 import { ServerValue } from "firebase-admin/database";
+import { earn, activity } from "@/lib/wallet";
+import { dequeue } from "@/lib/queue";
 import { ensureUser, newUser, MAX_AUTH_AGE_MONEY, UserRecord } from "@/lib/user";
 
 export default route(async (req, res) => {
@@ -15,6 +17,7 @@ export default route(async (req, res) => {
   let balance = 0;
   let planId = "";
   let amount = 0;
+  let endAt = 0;
   await db()
     .ref(`users/${user.id}`)
     .transaction((cur: UserRecord | null) => {
@@ -36,12 +39,16 @@ export default route(async (req, res) => {
       k.status = "claimed";
       paid = k.amount + k.reward;
       planId = k.plan_id;
+      endAt = k.end;
       amount = k.amount;
       cur.balance += paid;
+      earn(cur, "staking", k.reward);
       balance = cur.balance;
       return cur;
     });
   if (err) throw new HttpError(409, err);
+  await dequeue("stake", endAt, `${user.id}_${id}`);
+  await activity(user.id, "stake_paid", { coins: paid, note: "Stake matured" });
   await db().ref().update({ [`stake_pools/${planId}`]: ServerValue.increment(-amount) }).catch(() => {});
   res.json({ success: true, paid, balance });
 });

@@ -7,6 +7,11 @@ import { adminLog, dayKey } from "@/lib/log";
 import { getSettings, invalidateSettings, parseSettings } from "@/lib/settings";
 import { tgCall } from "@/lib/telegram";
 import type { UserRecord } from "@/lib/user";
+import { earn, usdtTot, activity } from "@/lib/wallet";
+import { notify } from "@/lib/notify";
+import { payWeek, top, names } from "@/lib/leaderboard";
+import { weekIndex } from "@/lib/wallet";
+import { processTriggers } from "@/lib/triggers";
 import { getPrice, fromU, toU } from "@/lib/market";
 
 const idRe = /^[\w-]{1,64}$/;
@@ -242,11 +247,13 @@ export default route(async (req, res) => {
             return;
           }
           cur.balance = before + delta;
+          if (delta > 0) earn(cur, "adjust", delta);
           after = cur.balance;
           return cur;
         });
       if (missing) throw new HttpError(404, "User not found");
       if (err) throw new HttpError(409, err);
+      await activity(uid, "adjust", { coins: delta, note: reason });
       await adminLog(who, "adjust_balance", { uid, delta, reason, before, after });
       liab = null;
       return void res.json({ success: true, balance: after });
@@ -372,10 +379,13 @@ export default route(async (req, res) => {
       if (approve) {
         upd[`users/${rec.uid}/usdt_u`] = ServerValue.increment(toU(credit));
         upd[`users/${rec.uid}/deposits/${id}/credited`] = credit;
+        upd[`users/${rec.uid}/usdt_tot/deposited`] = ServerValue.increment(toU(credit));
       } else {
         upd[`deposit_txids/${rec.txkey}`] = null; // বাতিল হলে txid আবার জমা দেওয়া যাবে
       }
       await db().ref().update(upd);
+      await activity(rec.uid, approve ? "deposit" : "deposit_rejected", { usdt_u: approve ? toU(credit) : toU(Number(rec.amount) || 0), note });
+      await notify(rec.uid, approve ? `✅ Deposit approved: +${credit} USDT added to your wallet.` : `❌ Deposit rejected.${note ? " Reason: " + note : ""}`);
       await adminLog(who, approve ? "deposit_approved" : "deposit_rejected", { id, uid: rec.uid, claimed: rec.amount, credited: approve ? credit : 0, note });
       liab = null;
       return void res.json({ success: true });
@@ -405,8 +415,13 @@ export default route(async (req, res) => {
         [`users/${rec.uid}/usdt_withdrawals/${id}/status`]: rec.status,
         [`users/${rec.uid}/usdt_withdrawals/${id}/note`]: note || null,
       };
-      if (!pay) upd[`users/${rec.uid}/usdt_u`] = ServerValue.increment(toU(Number(rec.amount)));
+      if (!pay) {
+        upd[`users/${rec.uid}/usdt_u`] = ServerValue.increment(toU(Number(rec.amount)));
+        upd[`users/${rec.uid}/usdt_tot/withdrawn`] = ServerValue.increment(-toU(Number(rec.amount)));
+      }
       await db().ref().update(upd);
+      await activity(rec.uid, pay ? "usdt_paid" : "usdt_rejected", { usdt_u: toU(Number(rec.amount)), note });
+      await notify(rec.uid, pay ? `✅ Your USDT withdrawal of ${rec.amount} USDT has been paid.` : `↩️ Your USDT withdrawal was rejected and ${rec.amount} USDT was refunded.${note ? " Reason: " + note : ""}`);
       await adminLog(who, pay ? "usdt_paid" : "usdt_rejected", { id, uid: rec.uid, amount: rec.amount, note });
       liab = null;
       return void res.json({ success: true });
@@ -433,14 +448,72 @@ export default route(async (req, res) => {
             return;
           }
           cur.usdt_u = (cur.usdt_u || 0) + delta;
+          usdtTot(cur, "adjusted", delta);
           after = cur.usdt_u;
           return cur;
         });
       if (missing) throw new HttpError(404, "User not found");
       if (err) throw new HttpError(409, err);
+      await activity(uid, "adjust", { usdt_u: delta, note: reason });
       await adminLog(who, "adjust_usdt", { uid, delta: fromU(delta), reason });
       liab = null;
       return void res.json({ success: true, usdt: fromU(after) });
+    }
+
+    case "promoList": {
+      const v = ((await db().ref("promo").get()).val() || {}) as Record<string, any>;
+      return void res.json({ success: true, items: Object.entries(v).map(([code, p]) => ({ code, ...p })).sort((a, b) => (b.created || 0) - (a.created || 0)) });
+    }
+    case "savePromo": {
+      const code = String(b.code || "").trim().toUpperCase();
+      if (!/^[A-Z0-9_-]{3,24}$/.test(code)) throw new HttpError(400, "Code must be 3-24 letters, numbers, - or _");
+      const coins = Math.floor(Number(b.coins));
+      if (!Number.isFinite(coins) || coins < 1 || coins > 1e9) throw new HttpError(400, "Invalid reward");
+      const max = Math.floor(Number(b.max) || 0);
+      if (max < 0 || max > 1e7) throw new HttpError(400, "Invalid max uses");
+      const days = Number(b.days) || 0;
+      if (days < 0 || days > 3650) throw new HttpError(400, "Invalid expiry");
+      const prev = (await db().ref(`promo/${code}`).get()).val() || {};
+      const rec = { coins, max, used: prev.used || 0, active: b.active === undefined ? true : !!b.active, exp: days > 0 ? Date.now() + days * 86400000 : b.keepExp ? prev.exp || 0 : 0, created: prev.created || Date.now(), note: clean(b.note, 80) };
+      await db().ref(`promo/${code}`).set(rec);
+      await adminLog(who, "promo_saved", { code, coins, max, days });
+      return void res.json({ success: true });
+    }
+    case "deletePromo": {
+      const code = String(b.code || "").trim().toUpperCase();
+      if (!/^[A-Z0-9_-]{3,24}$/.test(code)) throw new HttpError(400, "Invalid code");
+      await db().ref(`promo/${code}`).remove();
+      await adminLog(who, "promo_deleted", { code });
+      return void res.json({ success: true });
+    }
+    case "lbView": {
+      const board = ["all"].includes(String(b.board)) ? "all" : /^w_\d+$/.test(String(b.board)) ? String(b.board) : `w_${weekIndex()}`;
+      const t = await top(board, 20);
+      const nm = await names(t.map((x) => x.id));
+      return void res.json({ success: true, board, week: weekIndex(), list: t.map((x, i) => ({ rank: i + 1, id: x.id, name: nm[x.id], v: x.v })) });
+    }
+    case "lbPayout": {
+      const idx = b.week === undefined ? weekIndex() - 1 : Math.floor(Number(b.week));
+      if (!Number.isFinite(idx) || idx >= weekIndex()) throw new HttpError(400, "Only finished weeks can be paid");
+      const r = await payWeek(idx, await getSettings(true));
+      await adminLog(who, "lb_payout", r as any);
+      liab = null;
+      return void res.json({ success: true, result: r });
+    }
+    case "engageStats": {
+      const [oo, os, ob, aa, ab, pr, lock, cron] = await Promise.all([
+        db().ref("orderx_sell").get(), db().ref("orderx_buy").get(), db().ref("orders").orderByKey().limitToLast(30).get(),
+        db().ref("alert_above").get(), db().ref("alert_below").get(), db().ref("promo").get(), db().ref("lb_paid").get(), db().ref("stats/cron_at").get(),
+      ]);
+      const cnt = (x: any) => Object.keys(x.val() || {}).length;
+      const orders: any[] = [];
+      ob.forEach((c) => { orders.push({ id: c.key, ...c.val() }); });
+      return void res.json({ success: true, openSell: cnt(oo), openBuy: cnt(os), alerts: cnt(aa) + cnt(ab), promos: cnt(pr), paidWeeks: Object.keys(lock.val() || {}), cronAt: cron.val() || 0, orders: orders.reverse() });
+    }
+    case "runTriggers": {
+      const p = await getPrice(await getSettings(true));
+      const r = await processTriggers(p && !p.stale ? p.price : null);
+      return void res.json({ success: true, ...r, price: p?.price || null });
     }
 
     case "getSettings": {
@@ -567,9 +640,13 @@ export default route(async (req, res) => {
       if (!rec) throw new HttpError(409, "not_pending");
 
       const upd: Record<string, any> = { [`users/${rec.uid}/withdrawals/${id}/status`]: next };
-      if (next === "rejected") upd[`users/${rec.uid}/balance`] = ServerValue.increment(Number(rec.amount));
+      if (next === "rejected") {
+        upd[`users/${rec.uid}/balance`] = ServerValue.increment(Number(rec.amount));
+        upd[`users/${rec.uid}/spent/withdrawn`] = ServerValue.increment(-Number(rec.amount));
+      }
       await db().ref().update(upd);
       await adminLog(who, next === "paid" ? "withdraw_paid" : "withdraw_rejected", { id, uid: rec.uid, amount: rec.amount, note });
+      await notify(rec.uid, next === "paid" ? "✅ Your withdrawal has been paid." : "↩️ Your withdrawal was rejected and the coins were refunded.");
       liab = null;
       return void res.json({ success: true });
     }

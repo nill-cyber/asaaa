@@ -3,6 +3,7 @@ import { route, rateLimit } from "@/lib/api";
 import { db } from "@/lib/firebase";
 import { ServerValue } from "firebase-admin/database";
 import { sortableId } from "@/lib/crypto";
+import { spend } from "@/lib/wallet";
 import { ensureUser, newUser, UserRecord, MAX_AUTH_AGE_MONEY } from "@/lib/user";
 
 /** Withdraw অনুরোধ: coin আগে কেটে নেওয়া হয়, admin টাকা পাঠালে paid / বাতিল করলে ফেরত */
@@ -49,6 +50,7 @@ export default route(async (req, res) => {
         return;
       }
       cur.balance -= amount;
+      spend(cur, "withdrawn", amount);
       out = { balance: cur.balance };
       return cur;
     });

@@ -8,6 +8,7 @@ type Candle = [number, number, number, number, number];
 interface M {
   price: { value: number; stale: boolean; at: number } | null;
   trade: { enabled: boolean; paused: string | null; buy: boolean; sell: boolean; feePct: number; min: number; max: number; dailyLimit: number; usedToday: number; coinsPerTfuel: number };
+  orders?: { enabled: boolean; max: number; alertsMax: number };
   balances: { coins: number; usdt: number };
   deposit: { enabled: boolean; networks: { id: string; name: string; address: string; min: number; note: string }[] };
   payout: { enabled: boolean; networks: { id: string; name: string; min: number; fee: number }[] };
@@ -30,17 +31,26 @@ const store = (k: string, v?: string) => {
   }
 };
 
-/* ---------------- Live chart: line / candle ---------------- */
+/* ---------------- Live chart: line / candle, zoom + pan like trading sites ---------------- */
+const RANGE_LABEL = { "1d": "24H", "7d": "7D", "30d": "30D", "90d": "3M", "1y": "1Y" } as const;
+type RangeKey = keyof typeof RANGE_LABEL;
+const MIN_SPAN = 8;
+
 function PriceChart({ live, onChange }: { live: number; onChange: (c: number) => void }) {
   const gid = "c" + useId().replace(/[^a-zA-Z0-9]/g, "");
   const [mode, setMode] = useState<"line" | "candle">(() => (store("chart_mode") === "candle" ? "candle" : "line"));
-  const [range, setRange] = useState<"1d" | "7d" | "30d">("1d");
+  const [range, setRange] = useState<RangeKey>("1d");
   const [data, setData] = useState<{ pts: [number, number][]; candles: Candle[] } | null>(null);
   const [hover, setHover] = useState<number | null>(null);
+  const [win, setWin] = useState<[number, number] | null>(null); // null = show everything
   const ref = useRef<SVGSVGElement>(null);
+  const ptrs = useRef(new Map<number, number>());
+  const drag = useRef<{ x0: number; w0: [number, number]; moved: boolean } | null>(null);
+  const pinch = useRef<{ d0: number; w0: [number, number]; c0: number } | null>(null);
 
   useEffect(() => {
     setData(null);
+    setWin(null);
     let dead = false;
     const go = () =>
       api<any>("market-chart", { range })
@@ -76,97 +86,210 @@ function PriceChart({ live, onChange }: { live: number; onChange: (c: number) =>
 
   const W = 340, H = 190, PR = 46, PT = 8, PB = 8;
   const cw = W - PR;
-  const series = view ? (mode === "candle" ? view.candles : view.pts) : [];
-  const n = series.length;
+  const n = view ? (mode === "candle" ? view.candles.length : view.pts.length) : 0;
 
+  // ---- window (zoom / pan) ----
+  const fit = (s0: number, e0: number): [number, number] => {
+    const min = Math.min(MIN_SPAN, n);
+    const span = Math.min(n, Math.max(min, e0 - s0));
+    let a = s0;
+    if (a < 0) a = 0;
+    if (a + span > n) a = n - span;
+    return [a, a + span];
+  };
+  const [ws, we] = win ? fit(win[0], win[1]) : [0, n];
+  const span = Math.max(1, we - ws);
+  const zoomed = n > 0 && span < n - 0.5;
+  const zoomAt = (factor: number, frac: number, base?: [number, number]) => {
+    const [s0, e0] = base || [ws, we];
+    const sp = e0 - s0;
+    const idx = s0 + frac * sp;
+    const nsp = sp / factor;
+    setWin(fit(idx - frac * nsp, idx - frac * nsp + nsp));
+  };
+  const fracOf = (clientX: number) => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return 0.5;
+    return Math.max(0, Math.min(1, ((clientX - r.left) / r.width) * (W / cw)));
+  };
+
+  // wheel zoom (desktop) — needs a non-passive listener to stop page scroll
+  const zoomRef = useRef(zoomAt);
+  zoomRef.current = zoomAt;
+  const fracRef = useRef(fracOf);
+  fracRef.current = fracOf;
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const h = (e: WheelEvent) => {
+      e.preventDefault();
+      zoomRef.current(e.deltaY < 0 ? 1.25 : 0.8, fracRef.current(e.clientX));
+    };
+    el.addEventListener("wheel", h, { passive: false });
+    return () => el.removeEventListener("wheel", h);
+  }, [n > 2]);
+
+  const hoverAt = (clientX: number) => setHover(Math.max(0, Math.min(n - 1, Math.floor(ws + fracOf(clientX) * span))));
+  const onDown = (e: React.PointerEvent) => {
+    (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+    ptrs.current.set(e.pointerId, e.clientX);
+    if (ptrs.current.size === 2) {
+      const [a, b] = Array.from(ptrs.current.values());
+      pinch.current = { d0: Math.max(10, Math.abs(a - b)), w0: [ws, we], c0: fracOf((a + b) / 2) };
+      drag.current = null;
+      setHover(null);
+    } else if (ptrs.current.size === 1) {
+      drag.current = { x0: e.clientX, w0: [ws, we], moved: false };
+      hoverAt(e.clientX);
+    }
+  };
+  const onMove = (e: React.PointerEvent) => {
+    if (n < 3) return;
+    if (ptrs.current.has(e.pointerId)) ptrs.current.set(e.pointerId, e.clientX);
+    if (pinch.current && ptrs.current.size >= 2) {
+      const [a, b] = Array.from(ptrs.current.values());
+      zoomAt(Math.abs(a - b) / pinch.current.d0, pinch.current.c0, pinch.current.w0);
+      return;
+    }
+    const d = drag.current;
+    if (d) {
+      const r = ref.current?.getBoundingClientRect();
+      const dx = e.clientX - d.x0;
+      if (Math.abs(dx) > 6) d.moved = true;
+      if (d.moved && r && zoomed) {
+        const per = (d.w0[1] - d.w0[0]) / ((r.width * cw) / W); // data units per px
+        setWin(fit(d.w0[0] - dx * per, d.w0[1] - dx * per));
+        setHover(null);
+        return;
+      }
+      if (!d.moved) return hoverAt(e.clientX);
+      return;
+    }
+    if (e.pointerType === "mouse") hoverAt(e.clientX);
+  };
+  const onUp = (e: React.PointerEvent) => {
+    ptrs.current.delete(e.pointerId);
+    if (ptrs.current.size < 2) pinch.current = null;
+    if (ptrs.current.size === 0) drag.current = null;
+    if (e.pointerType !== "mouse") setHover(null);
+  };
+
+  // ---- drawing (only the visible slice; y-axis rescales like trading apps) ----
   let body: React.ReactNode = null;
   let lo = 0, hi = 1;
-  if (view && n > 2) {
+  let yLive: number | null = null;
+  const ok = !!view && n > 2;
+  const i0 = Math.max(0, Math.floor(ws) - 1), i1 = Math.min(n - 1, Math.ceil(we));
+  const slot = cw / span;
+  const x = (i: number) => (i - ws + 0.5) * slot;
+  if (ok && view) {
     if (mode === "candle") {
-      lo = Math.min(...view.candles.map((c) => c[3]));
-      hi = Math.max(...view.candles.map((c) => c[2]));
+      let l = Infinity, h = -Infinity;
+      for (let i = i0; i <= i1; i++) {
+        l = Math.min(l, view.candles[i][3]);
+        h = Math.max(h, view.candles[i][2]);
+      }
+      lo = l; hi = h;
     } else {
-      const ys = view.pts.map((p) => p[1]);
-      lo = Math.min(...ys);
-      hi = Math.max(...ys);
+      let l = Infinity, h = -Infinity;
+      for (let i = i0; i <= i1; i++) {
+        l = Math.min(l, view.pts[i][1]);
+        h = Math.max(h, view.pts[i][1]);
+      }
+      lo = l; hi = h;
     }
     const pad = (hi - lo) * 0.08 || hi * 0.01;
     lo -= pad;
     hi += pad;
     const y = (v: number) => PT + (1 - (v - lo) / (hi - lo)) * (H - PT - PB);
-    const slot = cw / n;
-    const x = (i: number) => slot * i + slot / 2;
+    if (live > 0 && live >= lo && live <= hi) yLive = y(live);
     if (mode === "line") {
-      const line = view.pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
+      const line = view.pts.slice(i0, i1 + 1).map((p, k) => `${k ? "L" : "M"}${x(i0 + k).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
       body = (
         <>
-          <path d={`${line} L${x(n - 1)},${H} L${x(0)},${H} Z`} fill={`url(#${gid})`} />
+          <path d={`${line} L${x(i1)},${H} L${x(i0)},${H} Z`} fill={`url(#${gid})`} />
           <path d={line} fill="none" stroke={col} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
         </>
       );
     } else {
-      const bw = Math.max(1.5, Math.min(10, slot * 0.7));
-      body = view.candles.map((c, i) => {
+      const bw = Math.max(1.5, Math.min(16, slot * 0.7));
+      body = view.candles.slice(i0, i1 + 1).map((c, k) => {
         const g = c[4] >= c[1];
-        const k = g ? "#16a34a" : "#e5484d";
+        const kc = g ? "#16a34a" : "#e5484d";
         const top = y(Math.max(c[1], c[4])), bot = y(Math.min(c[1], c[4]));
+        const cx = x(i0 + k);
         return (
-          <g key={i}>
-            <line x1={x(i)} x2={x(i)} y1={y(c[2])} y2={y(c[3])} stroke={k} strokeWidth="1.2" />
-            <rect x={x(i) - bw / 2} y={top} width={bw} height={Math.max(1.5, bot - top)} fill={k} rx="1" />
+          <g key={i0 + k}>
+            <line x1={cx} x2={cx} y1={y(c[2])} y2={y(c[3])} stroke={kc} strokeWidth="1.2" />
+            <rect x={cx - bw / 2} y={top} width={bw} height={Math.max(1.5, bot - top)} fill={kc} rx="1" />
           </g>
         );
       });
     }
   }
-
-  const onMove = (e: React.PointerEvent) => {
-    const r = ref.current?.getBoundingClientRect();
-    if (!r || n < 3) return;
-    const rel = ((e.clientX - r.left) / r.width) * W;
-    setHover(Math.max(0, Math.min(n - 1, Math.floor((rel / cw) * n))));
-  };
-  const h = hover !== null && view ? (mode === "candle" ? view.candles[hover] : null) : null;
+  const h = hover !== null && view && mode === "candle" ? view.candles[hover] : null;
   const hp = hover !== null && view && mode === "line" ? view.pts[hover] : null;
-  const grid = [0, 0.5, 1].map((f) => ({ f, v: hi - (hi - lo) * f }));
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((f) => ({ f, v: hi - (hi - lo) * f }));
+  const when = (t: number) => new Date(t).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const t0 = ok && view ? (mode === "candle" ? view.candles[Math.max(0, Math.round(ws))][0] : view.pts[Math.max(0, Math.round(ws))][0]) : 0;
+  const t1 = ok && view ? (mode === "candle" ? view.candles[Math.min(n - 1, Math.round(we) - 1)][0] : view.pts[Math.min(n - 1, Math.round(we) - 1)][0]) : 0;
+  const zbtn: React.CSSProperties = { padding: "2px 9px", border: "1px solid var(--line)", borderRadius: 8, background: "var(--card)", fontWeight: 700, fontSize: 13, lineHeight: "18px", color: "var(--text)" };
 
   return (
     <div>
       <div className="row" style={{ margin: "8px 0 4px" }}>
         <div className="seg" style={{ margin: 0, padding: 2 }}>
-          {(["1d", "7d", "30d"] as const).map((r) => (
-            <button key={r} className={range === r ? "on" : ""} style={{ padding: "5px 10px" }} onClick={() => setRange(r)}>{r === "1d" ? "24H" : r === "7d" ? "7D" : "30D"}</button>
+          {(Object.keys(RANGE_LABEL) as RangeKey[]).map((r) => (
+            <button key={r} className={range === r ? "on" : ""} style={{ padding: "5px 8px" }} onClick={() => setRange(r)}>{RANGE_LABEL[r]}</button>
           ))}
         </div>
         <div className="seg" style={{ margin: 0, padding: 2 }}>
           {(["line", "candle"] as const).map((k) => (
-            <button key={k} className={mode === k ? "on" : ""} style={{ padding: "5px 10px" }} onClick={() => { setMode(k); store("chart_mode", k); }}>{k === "line" ? "Line" : "Candles"}</button>
+            <button key={k} className={mode === k ? "on" : ""} style={{ padding: "5px 8px" }} onClick={() => { setMode(k); setWin(null); store("chart_mode", k); }}>{k === "line" ? "Line" : "Candles"}</button>
           ))}
         </div>
       </div>
-      <div className="xs num" style={{ height: 16, color: "var(--muted)" }}>
-        {h ? `${new Date(h[0]).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} · O ${px(h[1])} H ${px(h[2])} L ${px(h[3])} C ${px(h[4])}` : hp ? `${new Date(hp[0]).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} · ${px(hp[1])}` : ""}
+      <div className="xs num" style={{ minHeight: 24, color: "var(--muted)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+        <span>
+          {h ? `${when(h[0])} · O ${px(h[1])} H ${px(h[2])} L ${px(h[3])} C ${px(h[4])}` : hp ? `${when(hp[0])} · ${px(hp[1])}` : ok ? `${when(t0)} → ${when(t1)}` : ""}
+        </span>
+        {ok && (
+          <span style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+            <button aria-label="Zoom out" style={zbtn} onClick={() => zoomAt(0.6, 1)}>−</button>
+            <button aria-label="Zoom in" style={zbtn} onClick={() => zoomAt(1.6, 1)}>+</button>
+            {zoomed && <button aria-label="Reset zoom" style={{ ...zbtn, fontSize: 11 }} onClick={() => setWin(null)}>Reset</button>}
+          </span>
+        )}
       </div>
-      {!view || n < 3 ? (
+      {!ok ? (
         <div className="empty" style={{ padding: 40 }}>{view ? "Chart will appear shortly" : "Loading chart…"}</div>
       ) : (
-        <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", touchAction: "pan-y" }} onPointerMove={onMove} onPointerDown={onMove} onPointerLeave={() => setHover(null)} onPointerUp={() => setHover(null)}>
+        <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", touchAction: "pan-y", cursor: zoomed ? "grab" : "crosshair", userSelect: "none" }} onPointerMove={onMove} onPointerDown={onDown} onPointerUp={onUp} onPointerCancel={onUp} onPointerLeave={(e) => e.pointerType === "mouse" && setHover(null)}>
           <defs>
             <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0" stopColor={col} stopOpacity=".22" />
               <stop offset="1" stopColor={col} stopOpacity="0" />
             </linearGradient>
+            <clipPath id={gid + "k"}><rect x="0" y="0" width={cw} height={H} /></clipPath>
           </defs>
           {grid.map((g) => (
             <g key={g.f}>
               <line x1="0" x2={cw} y1={PT + g.f * (H - PT - PB)} y2={PT + g.f * (H - PT - PB)} stroke="#e7ebf3" strokeDasharray="3 4" />
-              <text x={W - 2} y={PT + g.f * (H - PT - PB) + (g.f === 0 ? 10 : g.f === 1 ? -3 : 3)} textAnchor="end" fontSize="9" fill="#6b7690">{g.v.toFixed(g.v < 0.1 ? 4 : 2)}</text>
+              <text x={W - 2} y={PT + g.f * (H - PT - PB) + (g.f === 0 ? 10 : g.f === 1 ? -3 : 3)} textAnchor="end" fontSize="9" fill="#6b7690">{g.v.toFixed(g.v < 0.1 ? 5 : 3)}</text>
             </g>
           ))}
-          {body}
-          {hover !== null && <line x1={(cw / n) * hover + cw / n / 2} x2={(cw / n) * hover + cw / n / 2} y1={PT} y2={H - PB} stroke="#6b7690" strokeOpacity=".5" />}
+          <g clipPath={`url(#${gid}k)`}>{body}</g>
+          {yLive !== null && (
+            <g>
+              <line x1="0" x2={cw} y1={yLive} y2={yLive} stroke={col} strokeDasharray="2 3" strokeOpacity=".7" />
+              <rect x={cw + 1} y={yLive - 7} width={PR - 2} height="14" rx="3" fill={col} />
+              <text x={W - 3} y={yLive + 3.5} textAnchor="end" fontSize="9" fontWeight="700" fill="#fff">{live.toFixed(live < 0.1 ? 5 : 3)}</text>
+            </g>
+          )}
+          {hover !== null && x(hover) >= 0 && x(hover) <= cw && <line x1={x(hover)} x2={x(hover)} y1={PT} y2={H - PB} stroke="#6b7690" strokeOpacity=".5" />}
         </svg>
       )}
+      {ok && <div className="xs muted" style={{ textAlign: "center", marginTop: 2 }}>Pinch or scroll to zoom · drag to move</div>}
     </div>
   );
 }
@@ -174,7 +297,7 @@ function PriceChart({ live, onChange }: { live: number; onChange: (c: number) =>
 export default function Market({ say, reload, cpt }: { say: Say; reload: () => void; cpt: number }) {
   const [m, setM] = useState<M | null>(null);
   const [change, setChange] = useState(0);
-  const [sub, setSub] = useState<"trade" | "deposit" | "withdraw" | "history">("trade");
+  const [sub, setSub] = useState<"trade" | "orders" | "deposit" | "withdraw" | "history">("trade");
 
   const load = useCallback(async () => {
     try {
@@ -231,12 +354,13 @@ export default function Market({ say, reload, cpt }: { say: Say; reload: () => v
       </div>
 
       <div className="seg">
-        {(["trade", "deposit", "withdraw", "history"] as const).map((k) => (
-          <button key={k} className={sub === k ? "on" : ""} onClick={() => setSub(k)}>{cap(k)}</button>
+        {(["trade", "orders", "deposit", "withdraw", "history"] as const).map((k) => (
+          <button key={k} className={sub === k ? "on" : ""} style={{ padding: "8px 4px" }} onClick={() => setSub(k)}>{k === "withdraw" ? "Payout" : cap(k)}</button>
         ))}
       </div>
 
       {sub === "trade" && <Trade m={m} cpt={cpt} say={say} done={done} />}
+      {sub === "orders" && <Orders m={m} cpt={cpt} say={say} done={done} />}
       {sub === "deposit" && <Deposit m={m} say={say} done={done} />}
       {sub === "withdraw" && <Payout m={m} say={say} done={done} />}
       {sub === "history" && <History m={m} cpt={cpt} />}
@@ -448,6 +572,160 @@ function History({ m, cpt }: { m: M; cpt: number }) {
           ))}
         </div>
       )}
+    </>
+  );
+}
+
+/* ---------------- Limit orders + price alerts ---------------- */
+interface Ord { id: string; side: "buy" | "sell"; coins: number; usdt: number; limit: number; status: string; price: number | null; at: number }
+interface Alrt { id: string; price: number; dir: "above" | "below"; at: number }
+
+function Orders({ m, cpt, say, done }: { m: M; cpt: number; say: Say; done: () => void }) {
+  const [side, setSide] = useState<"buy" | "sell">("sell");
+  const [amt, setAmt] = useState("");
+  const [lim, setLim] = useState("");
+  const [orders, setOrders] = useState<Ord[]>([]);
+  const [alerts, setAlerts] = useState<Alrt[]>([]);
+  const [ap, setAp] = useState("");
+  const [busy, setBusy] = useState(false);
+  const price = m.price?.value || 0;
+  const fee = m.trade.feePct / 100;
+
+  const refresh = useCallback(async () => {
+    try {
+      const [o, a] = await Promise.all([api<any>("orders", { action: "list" }), api<any>("alerts", { action: "list" })]);
+      setOrders(o.orders || []);
+      setAlerts(a.alerts || []);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    refresh();
+    const iv = setInterval(refresh, 15000);
+    return () => clearInterval(iv);
+  }, [refresh]);
+
+  const n = Number(amt) || 0;
+  const l = Number(lim) || 0;
+  const est = n > 0 && l > 0 ? (side === "sell" ? `${usd(n * l * (1 - fee), 4)} USDT` : `${fmtTf(Math.floor(((n * (1 - fee)) / l) * cpt), cpt)} TFUEL`) : "—";
+  const preset = (pct: number) => price && setLim((price * (1 + pct / 100)).toFixed(price < 0.1 ? 5 : 4));
+
+  const place = async () => {
+    setBusy(true);
+    try {
+      const r = await api<any>("orders", { action: "place", side, amount: n, limit: l });
+      setOrders(r.orders || []);
+      setAmt("");
+      say("Order placed. It fills automatically when the price is reached.", true);
+      done();
+    } catch (e: any) {
+      say(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const cancel = async (id: string) => {
+    try {
+      const r = await api<any>("orders", { action: "cancel", id });
+      setOrders(r.orders || []);
+      say("Order cancelled. Your funds were returned.", true);
+      done();
+    } catch (e: any) {
+      say(errText(e));
+    }
+  };
+  const addAlert = async () => {
+    try {
+      const r = await api<any>("alerts", { action: "add", price: Number(ap) });
+      setAlerts(r.alerts || []);
+      setAp("");
+      say("Alert set. We'll message you on Telegram.", true);
+    } catch (e: any) {
+      say(errText(e));
+    }
+  };
+  const rmAlert = async (id: string) => {
+    try {
+      setAlerts((await api<any>("alerts", { action: "remove", id })).alerts || []);
+    } catch (e: any) {
+      say(errText(e));
+    }
+  };
+
+  const open = orders.filter((o) => o.status === "open");
+  const past = orders.filter((o) => o.status !== "open").slice(0, 6);
+  const enabled = m.orders?.enabled !== false && m.trade.enabled;
+
+  return (
+    <>
+      <div className="card">
+        <div className="title">Limit order</div>
+        <div className="sub">Set a price. We buy or sell for you automatically when the market reaches it.</div>
+        {!enabled && <div className="banner warn"><Icon name="alert" size={18} /><span>Limit orders are unavailable right now.</span></div>}
+        <div className="seg" style={{ marginTop: 10 }}>
+          <button className={side === "sell" ? "on" : ""} onClick={() => { setSide("sell"); setAmt(""); setLim(""); }}>Sell high</button>
+          <button className={side === "buy" ? "on" : ""} onClick={() => { setSide("buy"); setAmt(""); setLim(""); }}>Buy low</button>
+        </div>
+        <label style={{ marginTop: 0 }}>{side === "sell" ? "TFUEL to sell" : "USDT to spend"}</label>
+        <div style={{ position: "relative" }}>
+          <input inputMode="decimal" placeholder="0" value={amt} onChange={(e) => setAmt(e.target.value.replace(/[^\d.]/g, ""))} />
+          <button className="btn sec sm" style={{ position: "absolute", right: 6, top: 6 }} onClick={() => setAmt(side === "sell" ? String(Math.floor(m.balances.coins) / cpt) : String(Math.floor(m.balances.usdt * 100) / 100))}>Max</button>
+        </div>
+        <label>{side === "sell" ? "Sell when price reaches (USDT)" : "Buy when price drops to (USDT)"}</label>
+        <input inputMode="decimal" placeholder={price ? `Now ${px(price)}` : "Price"} value={lim} onChange={(e) => setLim(e.target.value.replace(/[^\d.]/g, ""))} />
+        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+          {(side === "sell" ? [3, 5, 10, 20] : [-3, -5, -10, -20]).map((p) => (
+            <button key={p} className="btn sec sm" style={{ flex: 1 }} onClick={() => preset(p)}>{p > 0 ? "+" : ""}{p}%</button>
+          ))}
+        </div>
+        <div className="row sm" style={{ margin: "12px 0" }}><span className="muted">You receive ≈</span><b className="num">{est}</b></div>
+        <div className="xs muted" style={{ marginBottom: 10 }}>
+          {side === "sell" ? "Your TFUEL is set aside until the order fills or you cancel." : "Your USDT is set aside until the order fills or you cancel."} Fee {m.trade.feePct}% · up to {m.orders?.max ?? 5} open orders.
+        </div>
+        <button className="btn block" disabled={busy || !enabled || n <= 0 || l <= 0} onClick={place}>Place {side === "sell" ? "sell" : "buy"} order</button>
+      </div>
+
+      {(open.length > 0 || past.length > 0) && (
+        <div className="card">
+          <div className="title" style={{ marginBottom: 4 }}>My orders</div>
+          {open.map((o) => (
+            <div className="hist" key={o.id}>
+              <div>
+                <div className="title num" style={{ fontSize: 14 }}>{o.side === "sell" ? `Sell ${fmtTf(o.coins, cpt)} TFUEL` : `Buy with ${usd(o.usdt, 2)} USDT`}</div>
+                <div className="sub num">at {o.side === "sell" ? "≥" : "≤"} {px(o.limit)} · {day(o.at)}</div>
+              </div>
+              <button className="btn sec sm" onClick={() => cancel(o.id)}>Cancel</button>
+            </div>
+          ))}
+          {past.map((o) => (
+            <div className="hist" key={o.id}>
+              <div>
+                <div className="title num" style={{ fontSize: 14 }}>{o.side === "sell" ? `Sell ${fmtTf(o.coins, cpt)} TFUEL` : `Buy with ${usd(o.usdt, 2)} USDT`}</div>
+                <div className="sub num">{o.status === "filled" && o.price ? `filled at ${px(o.price)}` : `limit ${px(o.limit)}`} · {day(o.at)}</div>
+              </div>
+              <span className={`pill ${o.status === "filled" ? "ok" : ""}`}>{cap(o.status)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="card">
+        <div className="title">Price alerts</div>
+        <div className="sub">Get a Telegram message when TFUEL reaches your price. Make sure you've started the bot.</div>
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <input inputMode="decimal" placeholder={price ? `Now ${px(price)}` : "Target price"} value={ap} onChange={(e) => setAp(e.target.value.replace(/[^\d.]/g, ""))} />
+          <button className="btn" disabled={!(Number(ap) > 0)} onClick={addAlert}>Add</button>
+        </div>
+        {alerts.map((a) => (
+          <div className="hist" key={a.id}>
+            <div>
+              <div className="title num" style={{ fontSize: 14 }}>{a.dir === "above" ? "Rises to" : "Falls to"} {px(a.price)}</div>
+              <div className="sub">{day(a.at)}</div>
+            </div>
+            <button className="btn sec sm" onClick={() => rmAlert(a.id)}>Remove</button>
+          </div>
+        ))}
+        {alerts.length === 0 && <div className="xs muted" style={{ marginTop: 8 }}>No alerts yet.</div>}
+      </div>
     </>
   );
 }

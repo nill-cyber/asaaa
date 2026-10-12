@@ -1,6 +1,7 @@
 import { authenticate, HttpError } from "@/lib/auth";
 import { route, rateLimit } from "@/lib/api";
 import { db } from "@/lib/firebase";
+import { activity, lbAdd } from "@/lib/wallet";
 import { ensureUser, newUser, settleMining, MAX_AUTH_AGE_MONEY, UserRecord } from "@/lib/user";
 
 export default route(async (req, res) => {
@@ -18,5 +19,7 @@ export default route(async (req, res) => {
       return cur;
     });
   if (amount < 1) throw new HttpError(409, "nothing_to_collect");
+  await lbAdd(user.id, amount);
+  await activity(user.id, "mining", { coins: amount, note: "Collected" });
   res.json({ success: true, amount, balance });
 });

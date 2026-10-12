@@ -1,6 +1,7 @@
 import { authenticate, HttpError } from "@/lib/auth";
 import { route, rateLimit } from "@/lib/api";
 import { db } from "@/lib/firebase";
+import { earn, activity, lbAdd } from "@/lib/wallet";
 import { ensureUser, qualifyReferral, newUser, UserRecord, MAX_AUTH_AGE_MONEY } from "@/lib/user";
 
 /** timer_visit: server-এ মাপা সময় পার হলে পুরস্কার */
@@ -43,6 +44,7 @@ export default route(async (req, res) => {
       cur.completed_tasks = cur.completed_tasks || {};
       cur.completed_tasks[taskId] = { claimed: true, claimed_at: now };
       cur.balance += Number(task.reward) || 0;
+      earn(cur, "tasks", Number(task.reward) || 0);
       return cur;
     });
 
@@ -50,6 +52,8 @@ export default route(async (req, res) => {
     const f = failure as { status: number; msg: string } | null;
     throw new HttpError(f?.status || 400, f?.msg || "Rejected");
   }
+  await lbAdd(user.id, Number(task.reward) || 0);
+  await activity(user.id, "task", { coins: Number(task.reward) || 0, note: String(task.title || "").slice(0, 60) });
   await qualifyReferral(user.id);
   const u = result.snapshot.val() as UserRecord;
   res.json({ success: true, reward: task.reward, newBalance: u.balance });

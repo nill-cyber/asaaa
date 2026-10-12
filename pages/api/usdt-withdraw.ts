@@ -5,6 +5,7 @@ import { ServerValue } from "firebase-admin/database";
 import { sortableId } from "@/lib/crypto";
 import { ensureUser, newUser, MAX_AUTH_AGE_MONEY, UserRecord } from "@/lib/user";
 import { toU, U } from "@/lib/market";
+import { usdtTot, activity } from "@/lib/wallet";
 
 /** USDT withdraw: ব্যালেন্স আগে কাটা, admin হাতে পাঠিয়ে paid করে / বাতিলে ফেরত */
 export default route(async (req, res) => {
@@ -44,6 +45,7 @@ export default route(async (req, res) => {
         return;
       }
       cur.usdt_u = (cur.usdt_u || 0) - amount_u;
+      usdtTot(cur, "withdrawn", amount_u);
       left = cur.usdt_u;
       return cur;
     });
@@ -62,9 +64,10 @@ export default route(async (req, res) => {
     console.error("usdt withdraw record failed, refunding", user.id, amount, e);
     await db()
       .ref()
-      .update({ [`users/${user.id}/usdt_u`]: ServerValue.increment(amount_u) })
+      .update({ [`users/${user.id}/usdt_u`]: ServerValue.increment(amount_u), [`users/${user.id}/usdt_tot/withdrawn`]: ServerValue.increment(-amount_u) })
       .catch((e2) => console.error("REFUND FAILED", user.id, amount, e2));
     throw new HttpError(500, "withdraw_failed");
   }
+  await activity(user.id, "usdt_withdraw", { usdt_u: -amount_u, note: net.name });
   res.json({ success: true, id, usdtBalance: left / U, receive: data.receive });
 });

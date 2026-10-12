@@ -57,3 +57,14 @@ Admin → **Market & Trading**: Trading master switch (ডিফল্টে ব
 - ভুল কোডের গণনা commit হয়; claim/withdraw/refund সব transaction-এ, তাই একসাথে দুইবার চাপলে দুইবার হয় না।
 - আর্টিকেল সাইট থেকে আসা অনুরোধে `Origin` মেলানো হয়। দক্ষ কেউ স্ক্রিপ্ট দিয়ে ক্রম+সময় মেনে চেইন চালাতে পারে, তাই reward ও cooldown এমন রাখুন যাতে বট চালিয়ে লাভ না হয়।
 - `rate_limits` ডেটা ধীরে জমে; মাঝে মাঝে Firebase থেকে মুছে দিতে পারেন।
+
+## v5
+- Energy: প্রতি tap-এ `energy_cost` (ডিফল্ট 1.5), খালি হলে `empty_refill_hours` (ডিফল্ট 3) ঘণ্টা পর পুরো refill। Admin → Settings → Game থেকে বদলানো যায়; `Slow regen` = 0 রাখুন।
+- Profile = exchanger-style wallet (TFUEL + USDT, কোথা থেকে পেল, recent activity) — API: `/api/wallet`।
+- Logo ছোট করা হয়েছে।
+
+## v6 (Engagement)
+- Lucky Spin, Leaderboard (দৈনিক/সাপ্তাহিক/সর্বকালের + সাপ্তাহিক prize), Promo code, Rewarded ads (Adsgram), Price alerts, Limit orders (auto buy/sell), পূর্ণ History, Portfolio chart, Telegram bot notification, chart zoom/pan।
+- সব Admin → **Engagement** ট্যাব থেকে নিয়ন্ত্রণ।
+- Vercel Environment Variables-এ যোগ করুন: `CRON_SECRET` (আবশ্যক alert/order/বার্তার জন্য), `ADS_SECRET` (ঐচ্ছিক)।
+- cron-job.org (ফ্রি) এ `https://YOUR-SITE/api/cron?key=CRON_SECRET` প্রতি ১–৫ মিনিটে চালান। (vercel.json-এ দিনে একবারের backup cron আছে।)

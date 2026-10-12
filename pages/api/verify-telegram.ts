@@ -1,6 +1,7 @@
 import { authenticate, HttpError } from "@/lib/auth";
 import { route, rateLimit } from "@/lib/api";
 import { db } from "@/lib/firebase";
+import { earn, activity, lbAdd } from "@/lib/wallet";
 import { ensureUser, qualifyReferral, newUser, UserRecord, MAX_AUTH_AGE_MONEY } from "@/lib/user";
 import { tgCall } from "@/lib/telegram";
 
@@ -47,10 +48,13 @@ export default route(async (req, res) => {
       cur.completed_tasks = cur.completed_tasks || {};
       cur.completed_tasks[taskId] = { claimed: true, claimed_at: Date.now() };
       cur.balance += Number(task.reward) || 0;
+      earn(cur, "tasks", Number(task.reward) || 0);
       return cur;
     });
 
   if (!result.committed || failure) throw new HttpError(409, "Already claimed");
+  await lbAdd(user.id, Number(task.reward) || 0);
+  await activity(user.id, "task", { coins: Number(task.reward) || 0, note: String(task.title || "").slice(0, 60) });
   await qualifyReferral(user.id);
   const u = result.snapshot.val() as UserRecord;
   res.json({ success: true, reward: task.reward, newBalance: u.balance });

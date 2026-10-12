@@ -5,6 +5,7 @@ import { ServerValue } from "firebase-admin/database";
 import { chainCodeHash, safeEqualHex } from "@/lib/crypto";
 import { Run, isToken } from "@/lib/chain";
 import { bump, flag } from "@/lib/log";
+import { activity, lbAdd } from "@/lib/wallet";
 import { ensureUser, qualifyReferral, MAX_AUTH_AGE_MONEY, MAX_FAILED_ATTEMPTS } from "@/lib/user";
 
 /** শেষ আর্টিকেলে পাওয়া ৬ ডিজিটের কোড দিয়ে reward নেওয়া */
@@ -87,6 +88,7 @@ export default route(async (req, res) => {
   const { site_id, reward } = out as { site_id: string; reward: number };
   const update = {
     [`users/${user.id}/balance`]: ServerValue.increment(reward),
+    [`users/${user.id}/earn/articles`]: ServerValue.increment(reward),
     [`users/${user.id}/completed_tasks/${site_id}`]: { claimed_at: Date.now() },
     [`users/${user.id}/active_run`]: null,
   };
@@ -107,6 +109,8 @@ export default route(async (req, res) => {
   }
 
   await bump(`stats/sites/${site_id}/claimed`);
+  await lbAdd(user.id, reward);
+  await activity(user.id, "article", { coins: reward, note: "Article site" });
   await qualifyReferral(user.id);
   const balance = (await db().ref(`users/${user.id}/balance`).get()).val();
   res.json({ success: true, reward, newBalance: balance });

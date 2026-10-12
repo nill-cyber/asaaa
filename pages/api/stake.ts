@@ -1,3 +1,4 @@
+import { enqueue } from "@/lib/queue";
 import { authenticate, HttpError } from "@/lib/auth";
 import { route, rateLimit } from "@/lib/api";
 import { db } from "@/lib/firebase";
@@ -61,5 +62,6 @@ export default route(async (req, res) => {
     if (plan.pool_cap > 0) await db().ref().update({ [`stake_pools/${planId}`]: ServerValue.increment(-amount) }).catch(() => {});
     throw new HttpError(409, err);
   }
+  await enqueue("stake", now + plan.days * 86400000, `${user.id}_${id}`, { uid: user.id, total: amount + reward });
   res.json({ success: true, id, reward, balance });
 });

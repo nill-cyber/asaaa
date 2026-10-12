@@ -74,7 +74,17 @@ export default route(async (req, res) => {
     .slice(0, 20)
     .map(([id, w]) => ({ id, amount: w.amount, method: w.method, status: w.status, created_at: w.created_at }));
 
-  const eff = effective(u, settings);
+  const eff = effective(u, settings, now);
+  const en = currentEnergy(eff, now, settings.empty_refill_hours);
+  let refillAt: number | null = null;
+  if (en < settings.energy_cost && settings.empty_refill_hours > 0) {
+    let at = u.empty_at || 0;
+    if (!at) {
+      at = now; // energy খালি কিন্তু সময় শুরু হয়নি (যেমন admin cost বাড়িয়েছে) — এখন শুরু
+      await db().ref(`users/${user.id}/empty_at`).set(at).catch(() => {});
+    }
+    refillAt = at + settings.empty_refill_hours * 3600000;
+  }
   const price = await peekPrice(settings);
   res.json({
     success: true,
@@ -82,7 +92,10 @@ export default route(async (req, res) => {
       id: user.id,
       name: user.first_name,
       balance: u.balance,
-      energy: Math.floor(currentEnergy(eff)),
+      energy: Math.round(en * 100) / 100,
+      energyCost: settings.energy_cost,
+      refillAt,
+      refillHours: settings.empty_refill_hours,
       maxEnergy: eff.max_energy,
       regen: eff.energy_regen_rate,
       perTap: eff.earn_per_tap,

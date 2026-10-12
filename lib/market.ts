@@ -84,11 +84,13 @@ export async function peekPrice(s: Settings): Promise<number | null> {
   return st && st.p > 0 ? st.p : null;
 }
 
-export type Range = "1d" | "7d" | "30d";
+export type Range = "1d" | "7d" | "30d" | "90d" | "1y";
 const RANGES: Record<Range, { days: number; bucket: number; ttl: number }> = {
   "1d": { days: 1, bucket: 1800000, ttl: 600000 },
   "7d": { days: 7, bucket: 14400000, ttl: 1800000 },
   "30d": { days: 30, bucket: 14400000, ttl: 3600000 },
+  "90d": { days: 90, bucket: 86400000, ttl: 6 * 3600000 },
+  "1y": { days: 365, bucket: 4 * 86400000, ttl: 12 * 3600000 },
 };
 export type Candle = [number, number, number, number, number]; // t, o, h, l, c
 
@@ -123,7 +125,7 @@ export async function getChart(range: Range = "1d"): Promise<{ pts: [number, num
   let pts: [number, number][] = [];
   let candles: Candle[] = [];
   if (Array.isArray(j?.prices) && j.prices.length > 5) {
-    const step = Math.max(1, Math.floor(j.prices.length / 90));
+    const step = Math.max(1, Math.floor(j.prices.length / 300));
     pts = j.prices.filter((_: any, i: number) => i % step === 0).map((x: number[]) => [x[0], x[1]]);
   }
   if (Array.isArray(o) && o.length > 3) candles = o.map((x: number[]) => [x[0], x[1], x[2], x[3], x[4]] as Candle);

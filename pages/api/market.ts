@@ -3,6 +3,7 @@ import { route } from "@/lib/api";
 import { db } from "@/lib/firebase";
 import { ensureUser } from "@/lib/user";
 import { getPrice, fromU } from "@/lib/market";
+import { processTriggers } from "@/lib/triggers";
 
 const last = (o: Record<string, any> | undefined, n = 20) =>
   Object.entries(o || {})
@@ -15,6 +16,7 @@ export default route(async (req, res) => {
   const user = authenticate(req);
   const { u, settings: s } = await ensureUser(user);
   const p = await getPrice(s);
+  if (p && !p.stale) await processTriggers(p.price); // alert / limit order / বার্তা (lock আছে, দ্রুত)
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const dep = ((await db().ref(`users/${user.id}/deposits`).get()).val() || {}) as Record<string, any>;
   const pay = ((await db().ref(`users/${user.id}/usdt_withdrawals`).get()).val() || {}) as Record<string, any>;
@@ -34,6 +36,7 @@ export default route(async (req, res) => {
       usedToday: u.trade_day?.day === today ? fromU(u.trade_day.u) : 0,
       coinsPerTfuel: s.coins_per_tfuel,
     },
+    orders: { enabled: s.orders_enabled, max: s.max_open_orders, alertsMax: s.max_alerts },
     balances: { coins: u.balance, usdt: fromU(u.usdt_u || 0) },
     deposit: {
       enabled: s.deposit_enabled,

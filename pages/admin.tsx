@@ -4,8 +4,9 @@ import { api, tg } from "@/lib/client";
 import { BRAND } from "@/lib/brand";
 import Logo from "@/components/Logo";
 import Icon, { IconName } from "@/components/Icons";
+import EngagePage from "@/components/AdminEngage";
 
-type Tab = "rewards" | "dashboard" | "users" | "sites" | "tasks" | "withdrawals" | "usdt" | "market" | "fraud" | "settings" | "channel" | "logs";
+type Tab = "rewards" | "dashboard" | "users" | "sites" | "tasks" | "withdrawals" | "usdt" | "market" | "fraud" | "settings" | "channel" | "logs" | "engage";
 const NAV: [Tab, string, IconName][] = [
   ["dashboard", "Dashboard", "grid"],
   ["users", "Users", "users"],
@@ -15,6 +16,7 @@ const NAV: [Tab, string, IconName][] = [
   ["rewards", "Rewards & Plans", "gift"],
   ["usdt", "USDT desk", "download"],
   ["market", "Market & Trading", "trend"],
+  ["engage", "Engagement", "zap"],
   ["fraud", "Fraud monitor", "shield"],
   ["settings", "Settings", "settings"],
   ["channel", "Channel check", "send"],
@@ -160,6 +162,7 @@ export default function Admin() {
           {tab === "rewards" && <RewardsPage call={call} />}
           {tab === "usdt" && <UsdtDesk call={call} />}
           {tab === "market" && <MarketPage call={call} />}
+          {tab === "engage" && <EngagePage call={call} />}
           {tab === "fraud" && <Fraud call={call} />}
           {tab === "settings" && <SettingsPage call={call} />}
           {tab === "channel" && <Channel call={call} />}
@@ -678,8 +681,11 @@ function SettingsPage({ call }: { call: Call }) {
         <div className="grid3">
           <div><label>Coins per tap</label><input inputMode="numeric" value={s.earn_per_tap} onChange={(e) => set("earn_per_tap", e.target.value)} /></div>
           <div><label>Max energy</label><input inputMode="numeric" value={s.max_energy} onChange={(e) => set("max_energy", e.target.value)} /></div>
-          <div><label>Energy refill / sec</label><input inputMode="decimal" value={s.energy_regen} onChange={(e) => set("energy_regen", e.target.value)} /></div>
+          <div><label>Energy cost per tap</label><input inputMode="decimal" value={s.energy_cost} onChange={(e) => set("energy_cost", e.target.value)} /></div>
+          <div><label>Full refill after empty (hours)</label><input inputMode="decimal" value={s.empty_refill_hours} onChange={(e) => set("empty_refill_hours", e.target.value)} /></div>
+          <div><label>Slow regen / sec (0 = off)</label><input inputMode="decimal" value={s.energy_regen} onChange={(e) => set("energy_regen", e.target.value)} /></div>
         </div>
+        <div className="small muted" style={{ marginTop: 6 }}>When a user's energy runs out, it refills to full after the hours above. Keep slow regen at 0 so the wait is the only way to refill (boosts with regen still work).</div>
       </div>
 
       <div className="card">

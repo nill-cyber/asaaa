@@ -4,6 +4,7 @@ import { db } from "@/lib/firebase";
 import { ServerValue } from "firebase-admin/database";
 import { sortableId } from "@/lib/crypto";
 import { dayKey } from "@/lib/log";
+import { earn, spend, usdtTot, activity } from "@/lib/wallet";
 import { ensureUser, newUser, MAX_AUTH_AGE_MONEY, UserRecord } from "@/lib/user";
 import { getPrice, toU, U } from "@/lib/market";
 
@@ -81,6 +82,7 @@ export default route(async (req, res) => {
         return;
       }
       cur.balance += coinDelta;
+      if (side === "sell") { spend(cur, "sold", coins); usdtTot(cur, "sold", usdtDelta); } else { earn(cur, "bought", coins); usdtTot(cur, "bought", -usdtDelta); }
       cur.usdt_u = (cur.usdt_u || 0) + usdtDelta;
       cur.trade_day = { day, u: used + gross_u };
       const t: Record<string, any> = ((cur as any).trades = (cur as any).trades || {});
@@ -101,6 +103,7 @@ export default route(async (req, res) => {
     })
     .catch(() => {});
 
+  await activity(user.id, side, { coins: coinDelta, usdt_u: usdtDelta, note: `@ $${p.price}` });
   const o = out as unknown as { balance: number; usdt_u: number };
   res.json({ success: true, side, coins, usdt: Math.abs(usdtDelta) / U, fee: fee_u / U, price: p.price, balance: o.balance, usdtBalance: o.usdt_u / U });
 });

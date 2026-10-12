@@ -5,6 +5,6 @@ import { getChart, Range } from "@/lib/market";
 export default route(async (req, res) => {
   authenticate(req);
   const r = String(req.body?.range || "1d") as Range;
-  const c = await getChart(["1d", "7d", "30d"].includes(r) ? r : "1d");
+  const c = await getChart(["1d", "7d", "30d", "90d", "1y"].includes(r) ? r : "1d");
   res.json({ success: true, ...c });
 });

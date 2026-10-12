@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { api, errText, fmtTf, fmtUsd, openLink, openTgLink, tg } from "@/lib/client";
 import { BRAND } from "@/lib/brand";
 import Logo from "@/components/Logo";
 import Icon from "@/components/Icons";
 import Market from "@/components/Market";
 import { BoostTab, DailyCard } from "@/components/Growth";
+import { SpinCard, PromoCard, AdBonus, AdRefill, Leaderboard } from "@/components/Engage";
 
 interface Me {
   banned?: boolean;
   maintenance?: boolean;
   message?: string;
-  user: { id: string; name?: string; balance: number; energy: number; maxEnergy: number; regen: number; perTap: number };
+  user: { id: string; name?: string; balance: number; energy: number; energyCost: number; refillAt: number | null; refillHours: number; maxEnergy: number; regen: number; perTap: number };
   tasks: Task[];
   sites: Site[];
   run: { site_id: string; step_done: number; total: number; status: string } | null;
@@ -47,6 +48,14 @@ const mins = (ms: number) => {
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
 };
 
+const hm = (ms: number) => {
+  const sec = Math.max(0, Math.ceil(ms / 1000));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const x = sec % 60;
+  return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${x}s` : `${x}s`;
+};
+
 export default function Home() {
   const [me, setMe] = useState<Me | null>(null);
   const [tab, setTab] = useState<Tab>("tap");
@@ -56,6 +65,7 @@ export default function Home() {
 
   const balance = useRef(0);
   const energy = useRef(0);
+  const refillAt = useRef<number | null>(null);
   const pending = useRef(0);
   const [, force] = useState(0);
   const rerender = () => force((n) => n + 1);
@@ -71,7 +81,8 @@ export default function Home() {
       setMe(d);
       if (d.user) {
         balance.current = d.user.balance + pending.current;
-        energy.current = Math.max(0, d.user.energy - pending.current);
+        energy.current = Math.max(0, d.user.energy - pending.current * d.user.energyCost);
+        refillAt.current = d.user.refillAt;
       }
       rerender();
     } catch (e: any) {
@@ -100,17 +111,26 @@ export default function Home() {
   // every second: flush queued taps + show energy refill
   useEffect(() => {
     const iv = setInterval(async () => {
-      if (me?.user && energy.current < me.user.maxEnergy) {
-        energy.current = Math.min(me.user.maxEnergy, energy.current + me.user.regen);
+      if (me?.user) {
+        const cost = me.user.energyCost;
+        if (me.user.regen > 0 && energy.current < me.user.maxEnergy) {
+          energy.current = Math.min(me.user.maxEnergy, energy.current + me.user.regen);
+        }
+        // empty → waits until the refill time, then reloads (server refills to full)
+        if (energy.current < cost && refillAt.current && Date.now() >= refillAt.current) {
+          refillAt.current = null;
+          load();
+        }
         rerender();
       }
       const n = pending.current;
       if (n > 0) {
         pending.current = 0;
         try {
-          const r = await api<{ balance: number; energy: number }>("tap", { tapCount: n });
+          const r = await api<{ balance: number; energy: number; refillAt: number | null }>("tap", { tapCount: n });
           balance.current = r.balance + pending.current;
-          energy.current = Math.max(0, r.energy - pending.current);
+          energy.current = Math.max(0, r.energy - pending.current * me!.user.energyCost);
+          refillAt.current = r.refillAt ?? null;
           rerender();
         } catch (e: any) {
           say(errText(e));
@@ -123,9 +143,9 @@ export default function Home() {
   }, [me, load, say]);
 
   const onTap = (e: React.PointerEvent) => {
-    if (!me?.user || energy.current < 1 || pending.current >= MAX_TAPS_PER_FLUSH) return;
+    if (!me?.user || energy.current + 1e-9 < me.user.energyCost || pending.current >= MAX_TAPS_PER_FLUSH) return;
     pending.current += 1;
-    energy.current -= 1;
+    energy.current -= me.user.energyCost;
     balance.current += me.user.perTap;
     tg()?.HapticFeedback?.impactOccurred("light");
     const id = Date.now() + Math.random();
@@ -174,6 +194,8 @@ export default function Home() {
     );
 
   const pct = Math.max(0, Math.min(100, (energy.current / me.user.maxEnergy) * 100));
+  const empty = energy.current + 1e-9 < me.user.energyCost;
+  const left = refillAt.current ? Math.max(0, refillAt.current - Date.now()) : 0;
   const bal = Math.floor(balance.current);
   const cpt = me.cfg.coinsPerTfuel || 1000;
   const T = (n: number) => fmtTf(n, cpt);
@@ -192,7 +214,7 @@ export default function Home() {
 
       <div className="topbar">
         <div className="brand">
-          <Logo size={34} />
+          <Logo size={28} />
           {BRAND}
         </div>
         <div className="avatar">{(me.user.name || "U").slice(0, 1).toUpperCase()}</div>
@@ -208,7 +230,7 @@ export default function Home() {
       <div className="balance-card">
         <div className="lbl">Total balance</div>
         <div className="amt num">
-          <Logo size={34} />
+          <Logo size={26} />
           {T(bal)}
           <span className="unit">TFUEL</span>
         </div>
@@ -218,8 +240,8 @@ export default function Home() {
       {tab === "tap" && (
         <>
           <div className="coin-wrap">
-            <button className="coin" onPointerDown={onTap} disabled={energy.current < 1} aria-label="Tap to earn">
-              <Logo size={170} style={{ pointerEvents: "none" }} />
+            <button className="coin" onPointerDown={onTap} disabled={empty} aria-label="Tap to earn">
+              <Logo size={140} style={{ pointerEvents: "none" }} />
             </button>
             {floats.map((f) => (
               <span key={f.id} className="float" style={{ left: f.x, top: 70 }}>
@@ -239,13 +261,21 @@ export default function Home() {
             <div className="bar">
               <div style={{ width: `${pct}%` }} />
             </div>
+            <div className="small" style={{ marginTop: 8, textAlign: "center" }}>
+              {empty
+                ? refillAt.current
+                  ? `Energy empty — full refill in ${hm(left)}`
+                  : "Energy empty — refilling soon…"
+                : `Each tap uses ${me.user.energyCost} energy`}
+            </div>
+            {empty && <AdRefill say={say} reload={load} />}
           </div>
         </>
       )}
 
       {tab === "boost" && <BoostTab cpt={cpt} price={me.price || 0} say={say} reload={load} />}
       {tab === "tfuel" && <Market say={say} reload={load} cpt={cpt} />}
-      {tab === "tasks" && <Tasks me={me} cpt={cpt} say={say} reload={load} />}
+      {tab === "tasks" && <TasksWrap me={me} cpt={cpt} say={say} reload={load} />}
       {tab === "profile" && <Profile me={me} cpt={cpt} balance={bal} go={go} say={say} reload={load} />}
 
       <div className="nav">
@@ -259,6 +289,26 @@ export default function Home() {
         </div>
       </div>
     </div>
+  );
+}
+
+function TasksWrap({ me, cpt, say, reload }: { me: Me; cpt: number; say: Say; reload: () => void }) {
+  const [view, setView] = useState<"earn" | "top">("earn");
+  return (
+    <>
+      <div className="seg">
+        <button className={view === "earn" ? "on" : ""} onClick={() => setView("earn")}>Earn</button>
+        <button className={view === "top" ? "on" : ""} onClick={() => setView("top")}>Leaderboard</button>
+      </div>
+      {view === "earn" ? (
+        <>
+          <Tasks me={me} cpt={cpt} say={say} reload={reload} />
+          <PromoCard cpt={cpt} say={say} reload={reload} />
+        </>
+      ) : (
+        <Leaderboard cpt={cpt} say={say} />
+      )}
+    </>
   );
 }
 
@@ -347,6 +397,8 @@ function Tasks({ me, cpt, say, reload }: { me: Me; cpt: number; say: Say; reload
   return (
     <>
       <DailyCard cpt={cpt} say={say} reload={reload} />
+      <SpinCard cpt={cpt} say={say} reload={reload} />
+      <AdBonus cpt={cpt} say={say} reload={reload} />
 
       <div className="section">
         <h2>Article sites</h2>
@@ -510,22 +562,7 @@ function Profile({ me, cpt, balance, go, say, reload }: { me: Me; cpt: number; b
         <span className="pill">ID {me.user.id}</span>
       </div>
 
-      <div className="card">
-        <div className="row">
-          <div className="left">
-            <div className="ico green"><Icon name="wallet" /></div>
-            <div>
-              <div className="title num">{T(balance)} TFUEL</div>
-              <div className="sub num">≈ {fmtUsd((balance / cpt) * (me.price || 0))} USDT</div>
-            </div>
-          </div>
-        </div>
-        <div className="grid2" style={{ marginTop: 12 }}>
-          <button className="btn" onClick={() => go("tfuel")}>Sell / Withdraw</button>
-          <button className="btn sec" onClick={() => go("boost")}>Boost &amp; Stake</button>
-        </div>
-        <div className="xs muted" style={{ marginTop: 8 }}>Sell TFUEL for USDT and withdraw to your wallet from the TFUEL tab.</div>
-      </div>
+      <WalletView balance={balance} cpt={cpt} go={go} />
 
       {methods.length > 0 && (
         <div className="card">
@@ -582,5 +619,270 @@ function Profile({ me, cpt, balance, go, say, reload }: { me: Me; cpt: number; b
         </div>
       )}
     </>
+  );
+}
+
+const EARN_LABEL: Record<string, string> = {
+  tap: "Tapping", articles: "Article sites", tasks: "Tasks", daily: "Daily rewards", referral: "Referrals",
+  mining: "Auto-mining", staking: "Staking rewards", bought: "Bought with USDT", adjust: "Admin credit",
+};
+const SPEND_LABEL: Record<string, string> = { boosts: "Boosts", sold: "Sold for USDT", withdrawn: "Withdrawn" };
+const USDT_LABEL: Record<string, string> = {
+  deposited: "Deposited", sold: "From selling TFUEL", bought: "Spent buying TFUEL", withdrawn: "Withdrawn", adjusted: "Admin adjustment",
+};
+const ACT_LABEL: Record<string, string> = {
+  article: "Article reward", task: "Task reward", daily: "Daily reward", referral: "Referral bonus", mining: "Mining collected",
+  stake_paid: "Staking payout", boost: "Boost purchased", sell: "Sold TFUEL", buy: "Bought TFUEL", deposit: "USDT deposit",
+  deposit_rejected: "Deposit rejected", usdt_withdraw: "USDT withdrawal", usdt_paid: "Withdrawal paid", usdt_rejected: "Withdrawal refunded", adjust: "Balance adjustment",
+  spin: "Lucky Spin", promo: "Promo code", prize: "Leaderboard prize", ads: "Ad reward", limit_buy: "Limit buy filled", limit_sell: "Limit sell filled",
+};
+
+interface Wallet {
+  price: number | null;
+  tfuel: { balance: number; locked: number; mining: number; earn: Record<string, number>; spent: Record<string, number> };
+  usdt: { balance: number; tot: Record<string, number> };
+  activity: { id: string; t: string; c: number; u: number; n: string; at: number }[];
+  portfolio: [number, number][];
+}
+
+/** Exchanger-style wallet: both balances, where they came from, recent activity */
+function WalletView({ balance, cpt, go }: { balance: number; cpt: number; go: (t: Tab) => void }) {
+  const [w, setW] = useState<Wallet | null>(null);
+  const [err, setErr] = useState(false);
+  useEffect(() => {
+    api<Wallet>("wallet").then(setW).catch(() => setErr(true));
+  }, []);
+  const T = (n: number) => fmtTf(n, cpt);
+  if (!w) return <div className="card small muted" style={{ textAlign: "center" }}>{err ? "Couldn't load wallet." : "Loading wallet…"}</div>;
+
+  const price = w.price || 0;
+  const tf = Math.max(balance, 0);
+  const tfUsd = (tf / cpt) * price;
+  const total = tfUsd + w.usdt.balance;
+  const earnRows = Object.entries(w.tfuel.earn).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  const earnSum = earnRows.reduce((a, [, v]) => a + v, 0) || 1;
+  const spentRows = Object.entries(w.tfuel.spent).filter(([, v]) => v > 0);
+  const usdtRows = Object.entries(w.usdt.tot).filter(([, v]) => v !== 0);
+
+  return (
+    <>
+      <div className="balance-card" style={{ marginTop: 0 }}>
+        <div className="lbl">Total wallet value</div>
+        <div className="amt num">{fmtUsd(total)}<span className="unit">USDT</span></div>
+        <div className="eq">TFUEL + USDT at the current market price</div>
+      </div>
+
+      <Portfolio pts={w.portfolio || []} total={total} />
+
+      <div className="card">
+        <div className="title" style={{ marginBottom: 4 }}>My assets</div>
+        <div className="row hist">
+          <div className="left">
+            <Logo size={34} />
+            <div>
+              <div className="title">TFUEL</div>
+              <div className="sub num">{price ? `@ ${fmtUsd(price)} USDT` : "price unavailable"}</div>
+            </div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div className="title num">{T(tf)}</div>
+            <div className="sub num">≈ {fmtUsd(tfUsd)} USDT</div>
+          </div>
+        </div>
+        <div className="row hist">
+          <div className="left">
+            <div className="ico green"><Icon name="wallet" /></div>
+            <div>
+              <div className="title">USDT</div>
+              <div className="sub">Tether</div>
+            </div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div className="title num">{fmtUsd(w.usdt.balance)}</div>
+            <div className="sub num">1 USDT = $1.00</div>
+          </div>
+        </div>
+        {(w.tfuel.locked > 0 || w.tfuel.mining > 0) && (
+          <div className="small muted num" style={{ marginTop: 8 }}>
+            {w.tfuel.locked > 0 && <>Staked (locked): {T(w.tfuel.locked)} TFUEL · </>}
+            {w.tfuel.mining > 0 && <>Mining waiting: {T(w.tfuel.mining)} TFUEL</>}
+          </div>
+        )}
+        <div className="grid2" style={{ marginTop: 12 }}>
+          <button className="btn" onClick={() => go("tfuel")}>Trade / Deposit</button>
+          <button className="btn sec" onClick={() => go("boost")}>Boost &amp; Stake</button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="title" style={{ marginBottom: 8 }}>How you got your TFUEL</div>
+        {earnRows.length === 0 && <div className="small muted">Nothing yet — start tapping!</div>}
+        {earnRows.map(([k, v]) => (
+          <div key={k} style={{ marginBottom: 10 }}>
+            <div className="t" style={{ display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+              <span>{EARN_LABEL[k] || k}</span>
+              <span className="num">{T(v)} <span className="muted">· {Math.round((v / earnSum) * 100)}%</span></span>
+            </div>
+            <div className="bar"><div style={{ width: `${(v / earnSum) * 100}%` }} /></div>
+          </div>
+        ))}
+        {spentRows.length > 0 && (
+          <div className="small muted" style={{ marginTop: 6 }}>
+            Used: {spentRows.map(([k, v]) => `${SPEND_LABEL[k] || k} ${T(v)}`).join(" · ")}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="title" style={{ marginBottom: 8 }}>How you got your USDT</div>
+        {usdtRows.length === 0 && <div className="small muted">No USDT activity yet. Deposit USDT or sell some TFUEL.</div>}
+        {usdtRows.map(([k, v]) => (
+          <div className="hist" key={k}>
+            <div className="title" style={{ fontSize: 14 }}>{USDT_LABEL[k] || k}</div>
+            <div className="num" style={{ fontWeight: 700 }}>{v < 0 ? "−" : ""}{fmtUsd(Math.abs(v))} USDT</div>
+          </div>
+        ))}
+      </div>
+
+      <ActivityList first={w.activity} cpt={cpt} />
+
+      <NotifyToggle />
+    </>
+  );
+}
+
+/** Portfolio value over time (USDT) */
+function Portfolio({ pts, total }: { pts: [number, number][]; total: number }) {
+  const gid = "pf" + useId().replace(/[^a-zA-Z0-9]/g, "");
+  const data = pts.length ? [...pts.slice(0, -1), [Date.now(), total] as [number, number]] : [];
+  if (data.length < 2) {
+    return (
+      <div className="card">
+        <div className="title">Portfolio</div>
+        <div className="small muted" style={{ marginTop: 4 }}>Your wallet value chart builds up as you come back. Check again later.</div>
+      </div>
+    );
+  }
+  const W = 320, H = 110;
+  const ys = data.map((d) => d[1]);
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  const pad = (hi - lo) * 0.15 || hi * 0.05 || 0.01;
+  lo -= pad; hi += pad;
+  const t0 = data[0][0], t1 = data[data.length - 1][0] || t0 + 1;
+  const x = (t: number) => ((t - t0) / Math.max(1, t1 - t0)) * W;
+  const y = (v: number) => (1 - (v - lo) / (hi - lo)) * (H - 6) + 3;
+  const line = data.map((d, i) => `${i ? "L" : "M"}${x(d[0]).toFixed(1)},${y(d[1]).toFixed(1)}`).join(" ");
+  const first = data[0][1];
+  const pct = first > 0 ? (total / first - 1) * 100 : 0;
+  const col = pct >= 0 ? "#16a34a" : "#e5484d";
+  return (
+    <div className="card">
+      <div className="row">
+        <div className="title">Portfolio</div>
+        <span className={`pill ${pct >= 0 ? "ok" : "err"}`}>{pct >= 0 ? "+" : ""}{pct.toFixed(1)}%</span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", marginTop: 6 }}>
+        <defs>
+          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={col} stopOpacity=".22" />
+            <stop offset="1" stopColor={col} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={`${line} L${W},${H} L0,${H} Z`} fill={`url(#${gid})`} />
+        <path d={line} fill="none" stroke={col} strokeWidth="2" strokeLinejoin="round" />
+      </svg>
+      <div className="row xs muted" style={{ marginTop: 2 }}>
+        <span>{new Date(t0).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+        <span>Now · {fmtUsd(total)}</span>
+      </div>
+    </div>
+  );
+}
+
+type ActItem = { id: string; t: string; c: number; u: number; n: string; at: number };
+const FILTERS: [string, string, string[] | null][] = [
+  ["all", "All", null],
+  ["tfuel", "TFUEL", ["article", "task", "daily", "referral", "mining", "stake_paid", "boost", "spin", "promo", "prize", "ads", "adjust"]],
+  ["trade", "Trades", ["buy", "sell", "limit_buy", "limit_sell"]],
+  ["usdt", "USDT", ["deposit", "deposit_rejected", "usdt_withdraw", "usdt_paid", "usdt_rejected", "buy", "sell", "limit_buy", "limit_sell"]],
+];
+
+/** Recent activity with "load more" and filters */
+function ActivityList({ first, cpt }: { first: ActItem[]; cpt: number }) {
+  const [items, setItems] = useState<ActItem[]>(first);
+  const [more, setMore] = useState(first.length >= 30);
+  const [busy, setBusy] = useState(false);
+  const [f, setF] = useState("all");
+  const T = (n: number) => fmtTf(n, cpt);
+  const load = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ items: ActItem[]; more: boolean }>("history", { before: items[items.length - 1]?.id });
+      setItems((cur) => [...cur, ...r.items]);
+      setMore(r.more);
+    } catch {} finally {
+      setBusy(false);
+    }
+  };
+  const allow = FILTERS.find((x) => x[0] === f)?.[2];
+  const shown = allow ? items.filter((a) => allow.includes(a.t)) : items;
+  if (!items.length) return null;
+  return (
+    <div className="card">
+      <div className="title" style={{ marginBottom: 8 }}>Transaction history</div>
+      <div className="seg" style={{ margin: "0 0 4px" }}>
+        {FILTERS.map(([k, l]) => (
+          <button key={k} className={f === k ? "on" : ""} style={{ padding: "6px 4px" }} onClick={() => setF(k)}>{l}</button>
+        ))}
+      </div>
+      {shown.length === 0 && <div className="small muted" style={{ padding: "8px 0" }}>Nothing here yet.</div>}
+      {shown.map((a) => (
+        <div className="hist" key={a.id}>
+          <div>
+            <div className="title" style={{ fontSize: 14 }}>{ACT_LABEL[a.t] || a.t}</div>
+            <div className="sub">
+              {a.n ? `${a.n} · ` : ""}
+              {new Date(a.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+            </div>
+          </div>
+          <div style={{ textAlign: "right" }} className="num">
+            {a.c !== 0 && <div style={{ fontWeight: 700 }}>{a.c > 0 ? "+" : "−"}{T(Math.abs(a.c))} TFUEL</div>}
+            {a.u !== 0 && <div style={{ fontWeight: 700 }}>{a.u > 0 ? "+" : "−"}{fmtUsd(Math.abs(a.u))} USDT</div>}
+          </div>
+        </div>
+      ))}
+      {more && (
+        <button className="btn sec block" style={{ marginTop: 10 }} disabled={busy} onClick={load}>{busy ? "Loading…" : "Load more"}</button>
+      )}
+    </div>
+  );
+}
+
+/** Telegram bot messages on/off */
+function NotifyToggle() {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => {
+    api<any>("engage").then((d) => setOn(d.notify.available ? d.notify.on : null)).catch(() => {});
+  }, []);
+  if (on === null) return null;
+  const flip = async () => {
+    const next = !on;
+    setOn(next);
+    try {
+      await api("notify-pref", { on: next });
+    } catch {
+      setOn(!next);
+    }
+  };
+  return (
+    <div className="card">
+      <div className="row">
+        <div>
+          <div className="title">Telegram notifications</div>
+          <div className="sub">Energy full, deposits, payouts, stakes and price alerts. Make sure you've started the bot.</div>
+        </div>
+        <button className={`switch ${on ? "on" : ""}`} onClick={flip} aria-label="Toggle notifications" style={{ flexShrink: 0 }} />
+      </div>
+    </div>
   );
 }

@@ -2,6 +2,7 @@ import { authenticate, HttpError } from "@/lib/auth";
 import { route, rateLimit } from "@/lib/api";
 import { db } from "@/lib/firebase";
 import { dayKey } from "@/lib/log";
+import { earn, activity, lbAdd } from "@/lib/wallet";
 import { ensureUser, newUser, MAX_AUTH_AGE_MONEY, UserRecord } from "@/lib/user";
 
 /** প্রতিদিন (UTC) একবার; পরপর দিনে streak বাড়ে, একদিন বাদ গেলে ১ থেকে শুরু */
@@ -29,9 +30,12 @@ export default route(async (req, res) => {
       const reward = s.daily_rewards[(streak - 1) % s.daily_rewards.length] || 0;
       cur.daily = { day: today, streak };
       cur.balance += reward;
+      earn(cur, "daily", reward);
       out = { reward, streak, balance: cur.balance };
       return cur;
     });
   if (err) throw new HttpError(409, err);
+  await lbAdd(user.id, out.reward);
+  await activity(user.id, "daily", { coins: out.reward, note: `Day ${out.streak}` });
   res.json({ success: true, ...out });
 });

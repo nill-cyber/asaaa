@@ -32,7 +32,9 @@ export interface Settings {
 
   earn_per_tap: number;
   max_energy: number;
-  energy_regen: number;
+  energy_regen: number; // প্রতি সেকেন্ডে ধীরে ধীরে ভরা (০ = শুধু নিচের "খালি হলে পুরো ভরা")
+  energy_cost: number; // প্রতি tap-এ কত energy খরচ
+  empty_refill_hours: number; // energy খালি হলে এত ঘণ্টা পর পুরো ভরে (০ = বন্ধ)
   maintenance: boolean;
   maintenance_msg: string;
   announcement: { enabled: boolean; text: string; kind: "info" | "warn" | "success" };
@@ -43,6 +45,22 @@ export interface Settings {
   unit_label: string;
   new_user_wait_days: number; // নতুন user এতদিন পর withdraw পারবে (০ = সীমা নেই)
   daily_withdraw_limit: number; // প্রতিদিন সর্বোচ্চ কয়টা অনুরোধ (০ = সীমা নেই)
+  // ---- engagement ----
+  notify_enabled: boolean; // bot-এর মাধ্যমে user-কে বার্তা
+  orders_enabled: boolean; // limit / stop order
+  max_open_orders: number;
+  max_alerts: number;
+  spin_enabled: boolean;
+  spin_prizes: { coins: number; weight: number }[];
+  spin_free_per_day: number;
+  lb_enabled: boolean;
+  lb_prizes: number[]; // সাপ্তাহিক top N-এর prize (coin)
+  ads_enabled: boolean;
+  ads_block_id: string; // Adsgram block id
+  ads_coins: number; // একটা ad দেখলে bonus
+  ads_coins_per_day: number;
+  ads_energy_per_day: number; // ad দেখে energy refill দিনে কতবার
+  ads_spin_per_day: number; // ad দেখে extra spin দিনে কতবার
 }
 
 export const DEFAULTS: Settings = {
@@ -69,7 +87,9 @@ export const DEFAULTS: Settings = {
   payout_networks: [],
   earn_per_tap: 1,
   max_energy: 1000,
-  energy_regen: 3,
+  energy_regen: 0,
+  energy_cost: 1.5,
+  empty_refill_hours: 3,
   maintenance: false,
   maintenance_msg: "We're making improvements. Please check back soon.",
   announcement: { enabled: false, text: "", kind: "info" },
@@ -80,6 +100,29 @@ export const DEFAULTS: Settings = {
   unit_label: "USDT",
   new_user_wait_days: 0,
   daily_withdraw_limit: 0,
+  notify_enabled: true,
+  orders_enabled: true,
+  max_open_orders: 5,
+  max_alerts: 5,
+  spin_enabled: true,
+  spin_prizes: [
+    { coins: 20, weight: 40 },
+    { coins: 50, weight: 28 },
+    { coins: 100, weight: 15 },
+    { coins: 200, weight: 9 },
+    { coins: 500, weight: 5 },
+    { coins: 1000, weight: 2.5 },
+    { coins: 5000, weight: 0.5 },
+  ],
+  spin_free_per_day: 1,
+  lb_enabled: true,
+  lb_prizes: [5000, 3000, 2000, 1000, 1000],
+  ads_enabled: false,
+  ads_block_id: "",
+  ads_coins: 200,
+  ads_coins_per_day: 5,
+  ads_energy_per_day: 2,
+  ads_spin_per_day: 3,
 };
 
 let cache: { at: number; v: Settings } | null = null;
@@ -93,6 +136,8 @@ function merge(stored: any): Settings {
   return {
     ...DEFAULTS,
     ...s,
+    spin_prizes: arr(s.spin_prizes).length ? arr(s.spin_prizes) : DEFAULTS.spin_prizes,
+    lb_prizes: s.lb_prizes === undefined ? DEFAULTS.lb_prizes : arr(s.lb_prizes).map(Number),
     daily_rewards: Array.isArray(s.daily_rewards) ? s.daily_rewards : Object.values(s.daily_rewards || {}).length ? Object.values(s.daily_rewards) : DEFAULTS.daily_rewards,
     deposit_networks: arr(s.deposit_networks),
     payout_networks: arr(s.payout_networks),
@@ -177,6 +222,21 @@ export function parseSettings(b: any, cur: Settings): Settings {
     link = txt(b.referral_link, 100).replace(/\/+$/, "");
     if (link && !/^https:\/\/t\.me\/[A-Za-z0-9_]{4,}(\/[A-Za-z0-9_]+)?$/.test(link)) throw new HttpError(400, "Referral link must look like https://t.me/yourbot/app");
   }
+  let spin = cur.spin_prizes;
+  if (b.spin_prizes !== undefined) {
+    if (!Array.isArray(b.spin_prizes) || b.spin_prizes.length < 2 || b.spin_prizes.length > 12) throw new HttpError(400, "Spin needs 2 to 12 prizes");
+    spin = b.spin_prizes.map((x: any) => {
+      const coins = Math.floor(Number(x.coins));
+      const weight = Number(x.weight);
+      if (!Number.isFinite(coins) || coins < 1 || coins > 1e9 || !Number.isFinite(weight) || weight <= 0 || weight > 1e6) throw new HttpError(400, "Invalid spin prize");
+      return { coins, weight };
+    });
+  }
+  let lbp = cur.lb_prizes;
+  if (b.lb_prizes !== undefined) {
+    if (!Array.isArray(b.lb_prizes) || b.lb_prizes.length > 20) throw new HttpError(400, "Invalid leaderboard prizes");
+    lbp = b.lb_prizes.map((x: any) => Math.floor(n0(x, "leaderboard prize", 1e9)));
+  }
   const bool = (k: keyof Settings) => (b[k] === undefined ? (cur as any)[k] : !!b[k]);
   return {
     daily_enabled: bool("daily_enabled"),
@@ -203,6 +263,8 @@ export function parseSettings(b: any, cur: Settings): Settings {
     earn_per_tap: Math.floor(num(b.earn_per_tap, "earn_per_tap", 1, 1000, cur.earn_per_tap)),
     max_energy: Math.floor(num(b.max_energy, "max_energy", 10, 100000, cur.max_energy)),
     energy_regen: num(b.energy_regen, "energy_regen", 0, 1000, cur.energy_regen),
+    energy_cost: num(b.energy_cost, "energy_cost", 0.1, 100, cur.energy_cost),
+    empty_refill_hours: num(b.empty_refill_hours, "empty_refill_hours", 0, 72, cur.empty_refill_hours),
     maintenance: b.maintenance === undefined ? cur.maintenance : !!b.maintenance,
     maintenance_msg: str(b.maintenance_msg, 200, cur.maintenance_msg),
     announcement: {
@@ -217,5 +279,20 @@ export function parseSettings(b: any, cur: Settings): Settings {
     unit_label: str(b.unit_label, 10, cur.unit_label) || cur.unit_label,
     new_user_wait_days: Math.floor(num(b.new_user_wait_days, "new_user_wait_days", 0, 365, cur.new_user_wait_days)),
     daily_withdraw_limit: Math.floor(num(b.daily_withdraw_limit, "daily_withdraw_limit", 0, 100, cur.daily_withdraw_limit)),
+    notify_enabled: bool("notify_enabled"),
+    orders_enabled: bool("orders_enabled"),
+    max_open_orders: Math.floor(num(b.max_open_orders, "max_open_orders", 0, 50, cur.max_open_orders)),
+    max_alerts: Math.floor(num(b.max_alerts, "max_alerts", 0, 50, cur.max_alerts)),
+    spin_enabled: bool("spin_enabled"),
+    spin_prizes: spin,
+    spin_free_per_day: Math.floor(num(b.spin_free_per_day, "spin_free_per_day", 0, 50, cur.spin_free_per_day)),
+    lb_enabled: bool("lb_enabled"),
+    lb_prizes: lbp,
+    ads_enabled: bool("ads_enabled"),
+    ads_block_id: str(b.ads_block_id, 40, cur.ads_block_id),
+    ads_coins: Math.floor(num(b.ads_coins, "ads_coins", 0, 1e9, cur.ads_coins)),
+    ads_coins_per_day: Math.floor(num(b.ads_coins_per_day, "ads_coins_per_day", 0, 100, cur.ads_coins_per_day)),
+    ads_energy_per_day: Math.floor(num(b.ads_energy_per_day, "ads_energy_per_day", 0, 100, cur.ads_energy_per_day)),
+    ads_spin_per_day: Math.floor(num(b.ads_spin_per_day, "ads_spin_per_day", 0, 100, cur.ads_spin_per_day)),
   };
 }
