@@ -72,6 +72,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const step = idx + 1;
     const total = site.urls.length;
     const dwellMs = (Number(site.dwell_seconds) || 15) * 1000;
+    const lockMs = Math.min(dwellMs - 1000, Math.max(0, (site.lock_seconds ?? 5) * 1000));
     const goUrl = (s: number) => urlWithRun(site.urls[Math.min(s, total) - 1], token);
 
     let out: Record<string, any> = {};
@@ -131,7 +132,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const remain = Math.max(0, dwellMs - (now - r.arrived_at));
 
         if (action === "arrive") {
-          out = { ok: true, step, total, wait: Math.ceil(remain / 1000), ready: false };
+          out = { ok: true, step, total, wait: Math.ceil(remain / 1000), ready: false, lock: Math.ceil(Math.max(0, lockMs - (now - r.arrived_at)) / 1000) };
           return r;
         }
         if (remain > 0) {

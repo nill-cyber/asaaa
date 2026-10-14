@@ -5,6 +5,7 @@ import { getPrice } from "@/lib/market";
 import { processTriggers } from "@/lib/triggers";
 import { payWeek } from "@/lib/leaderboard";
 import { weekIndex } from "@/lib/wallet";
+import { recheckAuto } from "@/lib/deposits";
 
 /**
  * পর্যায়ক্রমে চলে (Vercel Cron বা cron-job.org থেকে প্রতি মিনিটে/৫ মিনিটে GET)।
@@ -21,8 +22,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // গত সপ্তাহের leaderboard prize (একবারই)
     let paid: any = null;
     if (s.lb_enabled) paid = await payWeek(weekIndex() - 1, s);
+    const dep = await recheckAuto().catch(() => null);
     await db().ref("stats/cron_at").set(Date.now()).catch(() => {});
-    res.json({ success: true, ...t, leaderboard: paid });
+    res.json({ success: true, ...t, leaderboard: paid, deposits: dep });
   } catch (e: any) {
     console.error(e);
     res.status(500).json({ success: false, error: "Server error" });

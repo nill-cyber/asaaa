@@ -5,3 +5,4 @@ export const LOGO_SOURCES = [
   "https://iili.io/nMRQttV.png",
   "https://iili.io/nMRQttV.th.png",
 ];
+export const USDT_SOURCES = ["/usdt.png", "https://iili.io/nAWDxcX.png"];

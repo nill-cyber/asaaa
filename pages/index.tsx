@@ -5,7 +5,7 @@ import Logo from "@/components/Logo";
 import Icon from "@/components/Icons";
 import Market from "@/components/Market";
 import { BoostTab, DailyCard } from "@/components/Growth";
-import { SpinCard, PromoCard, AdBonus, AdRefill, Leaderboard } from "@/components/Engage";
+import { SpinCard, PromoCard, AdBonus, AdRefill, Leaderboard, InAppAds } from "@/components/Engage";
 
 interface Me {
   banned?: boolean;
@@ -155,7 +155,9 @@ export default function Home() {
     rerender();
   };
 
-  const go = (t: Tab) => {
+  const [mkSub, setMkSub] = useState<string | undefined>(undefined);
+  const go = (t: Tab, sub?: string) => {
+    setMkSub(t === "tfuel" ? sub : undefined);
     setTab(t);
     if (t !== "tap") load();
   };
@@ -274,10 +276,11 @@ export default function Home() {
       )}
 
       {tab === "boost" && <BoostTab cpt={cpt} price={me.price || 0} say={say} reload={load} />}
-      {tab === "tfuel" && <Market say={say} reload={load} cpt={cpt} />}
+      {tab === "tfuel" && <Market key={mkSub || "m"} startSub={mkSub} say={say} reload={load} cpt={cpt} />}
       {tab === "tasks" && <TasksWrap me={me} cpt={cpt} say={say} reload={load} />}
       {tab === "profile" && <Profile me={me} cpt={cpt} balance={bal} go={go} say={say} reload={load} />}
 
+      <InAppAds />
       <div className="nav">
         <div className="nav-in">
           {items.map(([k, label, icon]) => (
@@ -528,7 +531,7 @@ function Tasks({ me, cpt, say, reload }: { me: Me; cpt: number; say: Say; reload
 }
 
 /** Profile: balance in TFUEL + USDT value, shortcuts, optional legacy payout methods, history */
-function Profile({ me, cpt, balance, go, say, reload }: { me: Me; cpt: number; balance: number; go: (t: Tab) => void; say: Say; reload: () => void }) {
+function Profile({ me, cpt, balance, go, say, reload }: { me: Me; cpt: number; balance: number; go: (t: Tab, sub?: string) => void; say: Say; reload: () => void }) {
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("");
   const [account, setAccount] = useState("");
@@ -562,63 +565,69 @@ function Profile({ me, cpt, balance, go, say, reload }: { me: Me; cpt: number; b
         <span className="pill">ID {me.user.id}</span>
       </div>
 
-      <WalletView balance={balance} cpt={cpt} go={go} />
-
-      {methods.length > 0 && (
-        <div className="card">
-          <div className="title">Other payout methods</div>
-          <div className="sub">Minimum {T(minWithdraw)} TFUEL</div>
-          {!withdrawEnabled ? (
-            <div className="banner warn">
-              <Icon name="alert" size={18} />
-              <span>Withdrawals are paused for now. Please check back later.</span>
-            </div>
-          ) : (
-            <>
-              <label>Amount (TFUEL)</label>
-              <input inputMode="decimal" placeholder={`Min ${T(minWithdraw)}`} value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))} />
-              <div className="small muted" style={{ marginTop: 4 }}>
-                {Number(amount) > 0 ? `≈ ${fmtUsd(Number(amount) * (me.price || 0))} USDT` : `Available: ${T(balance)} TFUEL`}
+      <WalletView balance={balance} cpt={cpt} go={go}>
+        {methods.length > 0 && (
+          <Acc icon="send" title="Other payout methods">
+            <div className="sub">Minimum {T(minWithdraw)} TFUEL</div>
+            {!withdrawEnabled ? (
+              <div className="banner warn">
+                <Icon name="alert" size={18} />
+                <span>Withdrawals are paused for now. Please check back later.</span>
               </div>
-              <label>Method</label>
-              <select value={method} onChange={(e) => setMethod(e.target.value)}>
-                <option value="">Select a method</option>
-                {methods.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <label>Account / wallet address</label>
-              <input placeholder="Enter your account or address" maxLength={100} value={account} onChange={(e) => setAccount(e.target.value)} />
-              <div style={{ marginTop: 14 }}>
-                <button className="btn block" disabled={busy} onClick={submit}>
-                  Request withdrawal
-                </button>
-              </div>
-              {msg && <div className={`banner ${msg.ok ? "success" : "err"}`}>{msg.t}</div>}
-            </>
-          )}
-        </div>
-      )}
-
-      {me.withdrawals.length > 0 && (
-        <div className="card">
-          <div className="title" style={{ marginBottom: 4 }}>Payout history</div>
+            ) : (
+              <>
+                <label>Amount (TFUEL)</label>
+                <input inputMode="decimal" placeholder={`Min ${T(minWithdraw)}`} value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))} />
+                <div className="small muted" style={{ marginTop: 4 }}>
+                  {Number(amount) > 0 ? `≈ ${fmtUsd(Number(amount) * (me.price || 0))} USDT` : `Available: ${T(balance)} TFUEL`}
+                </div>
+                <label>Method</label>
+                <select value={method} onChange={(e) => setMethod(e.target.value)}>
+                  <option value="">Select a method</option>
+                  {methods.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+                <label>Account / wallet address</label>
+                <input placeholder="Enter your account or address" maxLength={100} value={account} onChange={(e) => setAccount(e.target.value)} />
+                <div style={{ marginTop: 14 }}>
+                  <button className="btn block" disabled={busy} onClick={submit}>Request withdrawal</button>
+                </div>
+                {msg && <div className={`banner ${msg.ok ? "success" : "err"}`}>{msg.t}</div>}
+              </>
+            )}
+          </Acc>
+        )}
+        <Acc icon="wallet" title="Payout History">
+          {me.withdrawals.length === 0 && <div className="small muted">No payout requests yet.</div>}
           {me.withdrawals.map((w) => (
             <div className="hist" key={w.id}>
               <div>
                 <div className="title num">{T(w.amount)} TFUEL</div>
-                <div className="sub">
-                  {w.method} · {new Date(w.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                </div>
+                <div className="sub">{w.method} · {new Date(w.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</div>
               </div>
               <span className={`pill ${stCls(w.status)}`}>{w.status[0].toUpperCase() + w.status.slice(1)}</span>
             </div>
           ))}
-        </div>
-      )}
+          <button className="btn sec block" style={{ marginTop: 10 }} onClick={() => go("tfuel", "history")}>USDT deposits &amp; payouts</button>
+        </Acc>
+      </WalletView>
     </>
+  );
+}
+
+/** Collapsible profile section */
+function Acc({ icon, title, children }: { icon: string; title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`acc ${open ? "open" : ""}`}>
+      <button className="acc-h" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <span className="acc-i"><Icon name={icon as any} size={20} /></span>
+        <span className="acc-t">{title}</span>
+        <span className="acc-c"><Icon name="chevron" size={18} /></span>
+      </button>
+      {open && <div className="acc-b">{children}</div>}
+    </div>
   );
 }
 
@@ -646,7 +655,7 @@ interface Wallet {
 }
 
 /** Exchanger-style wallet: both balances, where they came from, recent activity */
-function WalletView({ balance, cpt, go }: { balance: number; cpt: number; go: (t: Tab) => void }) {
+function WalletView({ balance, cpt, go, children }: { balance: number; cpt: number; go: (t: Tab, sub?: string) => void; children?: React.ReactNode }) {
   const [w, setW] = useState<Wallet | null>(null);
   const [err, setErr] = useState(false);
   useEffect(() => {
@@ -664,18 +673,55 @@ function WalletView({ balance, cpt, go }: { balance: number; cpt: number; go: (t
   const spentRows = Object.entries(w.tfuel.spent).filter(([, v]) => v > 0);
   const usdtRows = Object.entries(w.usdt.tot).filter(([, v]) => v !== 0);
 
+  const topEarn = earnRows.slice(0, 3);
+  const usdtPos = usdtRows.filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 2);
+  const usdtSum = usdtPos.reduce((a, [, v]) => a + v, 0) || 1;
+
   return (
     <>
       <div className="balance-card" style={{ marginTop: 0 }}>
-        <div className="lbl">Total wallet value</div>
-        <div className="amt num">{fmtUsd(total)}<span className="unit">USDT</span></div>
-        <div className="eq">TFUEL + USDT at the current market price</div>
+        <div className="lbl">Total balance</div>
+        <div className="amt num"><Logo size={32} />{T(tf)}<span className="unit">TFUEL</span></div>
+        <div className="eq num">≈ ${fmtUsd(tfUsd)} USDT{w.usdt.balance > 0 ? ` · + ${fmtUsd(w.usdt.balance)} USDT cash` : ""}</div>
       </div>
 
-      <Portfolio pts={w.portfolio || []} total={total} />
+      <div className="grid3b">
+        <button className="btn" onClick={() => go("tfuel", "deposit")}>Deposit</button>
+        <button className="btn sec" onClick={() => go("tfuel", "withdraw")}>Withdraw</button>
+        <button className="btn sec" onClick={() => go("tfuel", "trade")}>Trade</button>
+      </div>
 
-      <div className="card">
-        <div className="title" style={{ marginBottom: 4 }}>My assets</div>
+      <div className="grid2" style={{ alignItems: "stretch" }}>
+        <div className="balance-card" style={{ marginBottom: 0 }}>
+          <div className="lbl">Total wallet value</div>
+          <div className="amt num" style={{ fontSize: 26, flexWrap: "wrap", gap: 4 }}>{total > 0 && total < 0.01 ? "<$0.01" : "$" + fmtUsd(total)}</div>
+          <div className="eq">USDT</div>
+        </div>
+        <div className="card" style={{ marginBottom: 0, padding: 14 }}>
+          <div className="title" style={{ fontSize: 13, marginBottom: 6 }}>How you got your TFUEL</div>
+          {topEarn.length === 0 && <div className="xs muted">Start tapping!</div>}
+          {topEarn.map(([k, v]) => (
+            <div key={k} style={{ marginBottom: 6 }}>
+              <div className="xs" style={{ display: "flex", justifyContent: "space-between" }}><span>{EARN_LABEL[k] || k}</span><span className="muted">{Math.round((v / earnSum) * 100)}%</span></div>
+              <div className="bar" style={{ height: 6 }}><div style={{ width: `${(v / earnSum) * 100}%` }} /></div>
+            </div>
+          ))}
+          <div className="title" style={{ fontSize: 13, margin: "8px 0 6px" }}>USDT</div>
+          {usdtPos.length === 0 && <div className="xs muted">No USDT yet</div>}
+          {usdtPos.map(([k, v]) => (
+            <div key={k} style={{ marginBottom: 6 }}>
+              <div className="xs" style={{ display: "flex", justifyContent: "space-between" }}><span>{USDT_LABEL[k] || k}</span><span className="muted">{Math.round((v / usdtSum) * 100)}%</span></div>
+              <div className="bar" style={{ height: 6 }}><div style={{ width: `${(v / usdtSum) * 100}%` }} /></div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ height: 12 }} />
+
+      <Acc icon="wallet" title="Portfolio & Assets">
+        <Portfolio pts={w.portfolio || []} total={total} />
+        <div className="title" style={{ margin: "8px 0 4px" }}>My assets</div>
         <div className="row hist">
           <div className="left">
             <Logo size={34} />
@@ -691,7 +737,7 @@ function WalletView({ balance, cpt, go }: { balance: number; cpt: number; go: (t
         </div>
         <div className="row hist">
           <div className="left">
-            <div className="ico green"><Icon name="wallet" /></div>
+            <Logo kind="usdt" size={34} />
             <div>
               <div className="title">USDT</div>
               <div className="sub">Tether</div>
@@ -708,18 +754,11 @@ function WalletView({ balance, cpt, go }: { balance: number; cpt: number; go: (t
             {w.tfuel.mining > 0 && <>Mining waiting: {T(w.tfuel.mining)} TFUEL</>}
           </div>
         )}
-        <div className="grid2" style={{ marginTop: 12 }}>
-          <button className="btn" onClick={() => go("tfuel")}>Trade / Deposit</button>
-          <button className="btn sec" onClick={() => go("boost")}>Boost &amp; Stake</button>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="title" style={{ marginBottom: 8 }}>How you got your TFUEL</div>
+        <div className="title" style={{ margin: "14px 0 8px" }}>All TFUEL sources</div>
         {earnRows.length === 0 && <div className="small muted">Nothing yet — start tapping!</div>}
         {earnRows.map(([k, v]) => (
           <div key={k} style={{ marginBottom: 10 }}>
-            <div className="t" style={{ display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
               <span>{EARN_LABEL[k] || k}</span>
               <span className="num">{T(v)} <span className="muted">· {Math.round((v / earnSum) * 100)}%</span></span>
             </div>
@@ -731,10 +770,7 @@ function WalletView({ balance, cpt, go }: { balance: number; cpt: number; go: (t
             Used: {spentRows.map(([k, v]) => `${SPEND_LABEL[k] || k} ${T(v)}`).join(" · ")}
           </div>
         )}
-      </div>
-
-      <div className="card">
-        <div className="title" style={{ marginBottom: 8 }}>How you got your USDT</div>
+        <div className="title" style={{ margin: "14px 0 4px" }}>USDT history</div>
         {usdtRows.length === 0 && <div className="small muted">No USDT activity yet. Deposit USDT or sell some TFUEL.</div>}
         {usdtRows.map(([k, v]) => (
           <div className="hist" key={k}>
@@ -742,11 +778,21 @@ function WalletView({ balance, cpt, go }: { balance: number; cpt: number; go: (t
             <div className="num" style={{ fontWeight: 700 }}>{v < 0 ? "−" : ""}{fmtUsd(Math.abs(v))} USDT</div>
           </div>
         ))}
-      </div>
+        <div className="grid2" style={{ marginTop: 12 }}>
+          <button className="btn sec" onClick={() => go("boost")}>Boost &amp; Stake</button>
+          <button className="btn sec" onClick={() => go("tfuel", "orders")}>Orders &amp; alerts</button>
+        </div>
+      </Acc>
 
-      <ActivityList first={w.activity} cpt={cpt} />
+      <Acc icon="clock" title="Transaction History">
+        <ActivityList first={w.activity} cpt={cpt} />
+      </Acc>
 
-      <NotifyToggle />
+      <Acc icon="send" title="Telegram Notifications">
+        <NotifyToggle />
+      </Acc>
+
+      {children}
     </>
   );
 }
@@ -826,10 +872,9 @@ function ActivityList({ first, cpt }: { first: ActItem[]; cpt: number }) {
   };
   const allow = FILTERS.find((x) => x[0] === f)?.[2];
   const shown = allow ? items.filter((a) => allow.includes(a.t)) : items;
-  if (!items.length) return null;
+  if (!items.length) return <div className="small muted">No transactions yet.</div>;
   return (
-    <div className="card">
-      <div className="title" style={{ marginBottom: 8 }}>Transaction history</div>
+    <div>
       <div className="seg" style={{ margin: "0 0 4px" }}>
         {FILTERS.map(([k, l]) => (
           <button key={k} className={f === k ? "on" : ""} style={{ padding: "6px 4px" }} onClick={() => setF(k)}>{l}</button>
@@ -864,7 +909,7 @@ function NotifyToggle() {
   useEffect(() => {
     api<any>("engage").then((d) => setOn(d.notify.available ? d.notify.on : null)).catch(() => {});
   }, []);
-  if (on === null) return null;
+  if (on === null) return <div className="small muted">Open the bot in Telegram and press Start to turn notifications on.</div>;
   const flip = async () => {
     const next = !on;
     setOn(next);
@@ -875,7 +920,7 @@ function NotifyToggle() {
     }
   };
   return (
-    <div className="card">
+    <div>
       <div className="row">
         <div>
           <div className="title">Telegram notifications</div>

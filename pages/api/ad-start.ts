@@ -16,7 +16,7 @@ export default route(async (req, res) => {
   const { settings: s } = await ensureUser(user);
   const purpose = String(req.body?.purpose || "") as Purpose;
   if (!PURPOSES.includes(purpose)) throw new HttpError(400, "bad_purpose");
-  if (!s.ads_enabled || !s.ads_block_id) throw new HttpError(403, "ads_disabled");
+  if (!s.ads_enabled || !(s.ads_provider === "monetag" ? s.ads_monetag_zone : s.ads_block_id)) throw new HttpError(403, "ads_disabled");
   const limit = purpose === "coins" ? s.ads_coins_per_day : purpose === "energy" ? s.ads_energy_per_day : s.spin_enabled ? s.ads_spin_per_day : 0;
   const day = dayKey();
   const nonce = randomToken();

@@ -10,10 +10,10 @@ interface M {
   trade: { enabled: boolean; paused: string | null; buy: boolean; sell: boolean; feePct: number; min: number; max: number; dailyLimit: number; usedToday: number; coinsPerTfuel: number };
   orders?: { enabled: boolean; max: number; alertsMax: number };
   balances: { coins: number; usdt: number };
-  deposit: { enabled: boolean; networks: { id: string; name: string; address: string; min: number; note: string }[] };
+  deposit: { enabled: boolean; networks: { id: string; name: string; address: string; min: number; note: string; auto?: boolean }[] };
   payout: { enabled: boolean; networks: { id: string; name: string; min: number; fee: number }[] };
   trades: { id: string; side: string; coins: number; usdt_u: number; price: number; at: number }[];
-  deposits: { id: string; network_name: string; amount: number; status: string; credited?: number; created_at: number; note?: string }[];
+  deposits: { id: string; network_name: string; amount: number; status: string; credited?: number; created_at: number; note?: string; auto?: boolean }[];
   payouts: { id: string; network_name: string; amount: number; receive: number; status: string; created_at: number; note?: string }[];
 }
 
@@ -32,14 +32,14 @@ const store = (k: string, v?: string) => {
 };
 
 /* ---------------- Live chart: line / candle, zoom + pan like trading sites ---------------- */
-const RANGE_LABEL = { "1d": "24H", "7d": "7D", "30d": "30D", "90d": "3M", "1y": "1Y" } as const;
+const RANGE_LABEL = { "1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1D" } as const;
 type RangeKey = keyof typeof RANGE_LABEL;
 const MIN_SPAN = 8;
 
 function PriceChart({ live, onChange }: { live: number; onChange: (c: number) => void }) {
   const gid = "c" + useId().replace(/[^a-zA-Z0-9]/g, "");
-  const [mode, setMode] = useState<"line" | "candle">(() => (store("chart_mode") === "candle" ? "candle" : "line"));
-  const [range, setRange] = useState<RangeKey>("1d");
+  const [mode, setMode] = useState<"line" | "candle">(() => (store("chart_mode") === "line" ? "line" : "candle"));
+  const [range, setRange] = useState<RangeKey>(() => ((store("chart_iv") || "") in RANGE_LABEL ? (store("chart_iv") as RangeKey) : "1m"));
   const [data, setData] = useState<{ pts: [number, number][]; candles: Candle[] } | null>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [win, setWin] = useState<[number, number] | null>(null); // null = show everything
@@ -53,11 +53,11 @@ function PriceChart({ live, onChange }: { live: number; onChange: (c: number) =>
     setWin(null);
     let dead = false;
     const go = () =>
-      api<any>("market-chart", { range })
+      api<any>("market-chart", { interval: range })
         .then((d) => !dead && setData({ pts: d.pts || [], candles: d.candles || [] }))
         .catch(() => {});
     go();
-    const iv = setInterval(go, 120000);
+    const iv = setInterval(go, range === "1m" ? 20000 : 60000);
     return () => {
       dead = true;
       clearInterval(iv);
@@ -233,20 +233,20 @@ function PriceChart({ live, onChange }: { live: number; onChange: (c: number) =>
   const when = (t: number) => new Date(t).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   const t0 = ok && view ? (mode === "candle" ? view.candles[Math.max(0, Math.round(ws))][0] : view.pts[Math.max(0, Math.round(ws))][0]) : 0;
   const t1 = ok && view ? (mode === "candle" ? view.candles[Math.min(n - 1, Math.round(we) - 1)][0] : view.pts[Math.min(n - 1, Math.round(we) - 1)][0]) : 0;
+  const sel: React.CSSProperties = { width: "auto", padding: "6px 28px 6px 12px", borderRadius: 12, fontWeight: 700, fontSize: 14, minHeight: 0 };
   const zbtn: React.CSSProperties = { padding: "2px 9px", border: "1px solid var(--line)", borderRadius: 8, background: "var(--card)", fontWeight: 700, fontSize: 13, lineHeight: "18px", color: "var(--text)" };
 
   return (
     <div>
       <div className="row" style={{ margin: "8px 0 4px" }}>
-        <div className="seg" style={{ margin: 0, padding: 2 }}>
-          {(Object.keys(RANGE_LABEL) as RangeKey[]).map((r) => (
-            <button key={r} className={range === r ? "on" : ""} style={{ padding: "5px 8px" }} onClick={() => setRange(r)}>{RANGE_LABEL[r]}</button>
-          ))}
-        </div>
-        <div className="seg" style={{ margin: 0, padding: 2 }}>
-          {(["line", "candle"] as const).map((k) => (
-            <button key={k} className={mode === k ? "on" : ""} style={{ padding: "5px 8px" }} onClick={() => { setMode(k); setWin(null); store("chart_mode", k); }}>{k === "line" ? "Line" : "Candles"}</button>
-          ))}
+        <div className="gap">
+          <select aria-label="Interval" value={range} style={sel} onChange={(e) => { const v = e.target.value as RangeKey; setRange(v); store("chart_iv", v); }}>
+            {(Object.keys(RANGE_LABEL) as RangeKey[]).map((r) => <option key={r} value={r}>{RANGE_LABEL[r]}</option>)}
+          </select>
+          <select aria-label="Chart type" value={mode} style={sel} onChange={(e) => { const v = e.target.value as "line" | "candle"; setMode(v); setWin(null); store("chart_mode", v); }}>
+            <option value="candle">Candles</option>
+            <option value="line">Line</option>
+          </select>
         </div>
       </div>
       <div className="xs num" style={{ minHeight: 24, color: "var(--muted)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
@@ -294,10 +294,11 @@ function PriceChart({ live, onChange }: { live: number; onChange: (c: number) =>
   );
 }
 
-export default function Market({ say, reload, cpt }: { say: Say; reload: () => void; cpt: number }) {
+type Sub = "trade" | "orders" | "deposit" | "withdraw" | "history";
+export default function Market({ say, reload, cpt, startSub }: { say: Say; reload: () => void; cpt: number; startSub?: string }) {
   const [m, setM] = useState<M | null>(null);
   const [change, setChange] = useState(0);
-  const [sub, setSub] = useState<"trade" | "orders" | "deposit" | "withdraw" | "history">("trade");
+  const [sub, setSub] = useState<Sub>((["trade", "orders", "deposit", "withdraw", "history"].includes(startSub || "") ? startSub : "trade") as Sub);
 
   const load = useCallback(async () => {
     try {
@@ -323,12 +324,17 @@ export default function Market({ say, reload, cpt }: { say: Say; reload: () => v
 
   return (
     <>
+      <div className="balance-card" style={{ marginTop: 0, marginBottom: 12 }}>
+        <div className="lbl">Total balance</div>
+        <div className="amt num"><Logo size={32} />{fmtTf(m.balances.coins, cpt)}<span className="unit">TFUEL</span></div>
+        <div className="eq num">≈ ${fmtUsd((m.balances.coins / cpt) * price + m.balances.usdt)} USDT</div>
+      </div>
       <div className="card" style={{ paddingBottom: 8 }}>
         <div className="row">
           <div className="left">
             <Logo size={36} />
             <div>
-              <div className="title">TFUEL</div>
+              <div className="title" style={{ fontSize: 18 }}>TFUEL <span className="muted" style={{ fontWeight: 500, display: "inline-flex", alignItems: "center", gap: 4 }}>/ <Logo kind="usdt" size={16} /> USDT</span></div>
               <div className="sub" style={{ display: "flex", alignItems: "center", gap: 6 }}><span className="livedot" /> Live · USDT</div>
             </div>
           </div>
@@ -342,12 +348,12 @@ export default function Market({ say, reload, cpt }: { say: Say; reload: () => v
 
       <div className="grid2" style={{ marginBottom: 12 }}>
         <div className="card" style={{ marginBottom: 0 }}>
-          <div className="sub">TFUEL</div>
+          <div className="sub" style={{ display: "flex", alignItems: "center", gap: 6 }}><Logo size={16} /> TFUEL</div>
           <div className="title num" style={{ fontSize: 18 }}>{fmtTf(m.balances.coins, cpt)}</div>
           <div className="xs muted">≈ {fmtUsd((m.balances.coins / cpt) * price)}</div>
         </div>
         <div className="card" style={{ marginBottom: 0 }}>
-          <div className="sub">USDT</div>
+          <div className="sub" style={{ display: "flex", alignItems: "center", gap: 6 }}><Logo kind="usdt" size={16} /> USDT</div>
           <div className="title num" style={{ fontSize: 18 }}>{usd(m.balances.usdt, 2)}</div>
           <div className="xs muted">Available</div>
         </div>
@@ -363,7 +369,7 @@ export default function Market({ say, reload, cpt }: { say: Say; reload: () => v
       {sub === "orders" && <Orders m={m} cpt={cpt} say={say} done={done} />}
       {sub === "deposit" && <Deposit m={m} say={say} done={done} />}
       {sub === "withdraw" && <Payout m={m} say={say} done={done} />}
-      {sub === "history" && <History m={m} cpt={cpt} />}
+      {sub === "history" && <History m={m} cpt={cpt} say={say} done={done} />}
     </>
   );
 }
@@ -436,17 +442,26 @@ function Deposit({ m, say, done }: { m: M; say: Say; done: () => void }) {
   const [id, setId] = useState(m.deposit.networks[0]?.id || "");
   const [txid, setTxid] = useState("");
   const [amt, setAmt] = useState("");
+  const [exact, setExact] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const net = m.deposit.networks.find((n) => n.id === id);
+  const auto = !!net?.auto;
+  useEffect(() => { setExact(null); }, [id]);
   if (!m.deposit.enabled || !m.deposit.networks.length)
     return <div className="card empty">Deposits aren&apos;t available right now.</div>;
+  const getExact = async () => {
+    setBusy(true);
+    try {
+      const r: any = await api("deposit", { action: "intent", network: id, amount: Number(amt) });
+      setExact(r.exact);
+    } catch (e: any) { say(errText(e)); } finally { setBusy(false); }
+  };
   const submit = async () => {
     setBusy(true);
     try {
-      await api("deposit", { network: id, txid: txid.trim(), amount: Number(amt) });
-      say("Deposit submitted. We'll credit it after checking.", true);
-      setTxid("");
-      setAmt("");
+      const r: any = await api("deposit", { network: id, txid: txid.trim(), amount: Number(amt) });
+      say(r.status === "approved" ? `Deposit confirmed: +${r.credited} USDT added.` : auto ? "Submitted. We'll credit it automatically once the network confirms." : "Deposit submitted. We'll credit it after checking.", true);
+      setTxid(""); setAmt(""); setExact(null);
       done();
     } catch (e: any) {
       say(errText(e));
@@ -454,29 +469,48 @@ function Deposit({ m, say, done }: { m: M; say: Say; done: () => void }) {
       setBusy(false);
     }
   };
+  const showAddr = !auto || exact !== null;
   return (
     <div className="card">
       <label style={{ marginTop: 0 }}>Network</label>
       <select value={id} onChange={(e) => setId(e.target.value)}>
         {m.deposit.networks.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
       </select>
-      {net && (
+      {auto && exact === null && (
         <>
+          <label>How much do you want to deposit? (USDT)</label>
+          <input inputMode="decimal" placeholder={`Min ${usd(net!.min, 2)}`} value={amt} onChange={(e) => setAmt(e.target.value.replace(/[^\d.]/g, ""))} />
+          <div className="xs muted" style={{ marginTop: 6 }}>We&apos;ll give you an exact amount to send so your deposit is matched and credited automatically.</div>
+          <div style={{ marginTop: 14 }}><button className="btn block" disabled={busy || !(Number(amt) >= net!.min)} onClick={getExact}>Continue</button></div>
+        </>
+      )}
+      {net && showAddr && (
+        <>
+          {auto && exact !== null && (
+            <div className="banner warn" style={{ marginTop: 12 }}>
+              <Icon name="alert" size={18} />
+              <span>Send <b>exactly {exact.toFixed(2)} USDT</b> (not a cent more or less) on <b>{net.name}</b>. Valid for 6 hours.</span>
+            </div>
+          )}
           <label>Send USDT to this address</label>
           <div className="gap" style={{ background: "var(--soft)", borderRadius: 12, padding: "10px 12px" }}>
             <span className="xs" style={{ wordBreak: "break-all", flex: 1, userSelect: "text", fontWeight: 600 }}>{net.address}</span>
             <button className="btn sec sm" onClick={() => { navigator.clipboard?.writeText(net.address); say("Address copied", true); }}><Icon name="copy" size={14} /></button>
           </div>
           <div className="banner warn"><Icon name="alert" size={18} /><span>Send only USDT on <b>{net.name}</b>. Minimum {usd(net.min, 2)} USDT.{net.note ? ` ${net.note}` : ""} Funds sent on another network can&apos;t be recovered.</span></div>
+          <label>After sending, paste the transaction ID (TxID)</label>
+          <input placeholder="Transaction hash" value={txid} onChange={(e) => setTxid(e.target.value)} />
+          {!auto && (
+            <>
+              <label>Amount sent (USDT)</label>
+              <input inputMode="decimal" placeholder="0.00" value={amt} onChange={(e) => setAmt(e.target.value.replace(/[^\d.]/g, ""))} />
+            </>
+          )}
+          <div style={{ marginTop: 14 }}>
+            <button className="btn block" disabled={busy || txid.trim().length < 16 || (!auto && !(Number(amt) > 0))} onClick={submit}>{auto ? "I've sent it — confirm" : "Submit deposit"}</button>
+          </div>
         </>
       )}
-      <label>After sending, paste the transaction ID (TxID)</label>
-      <input placeholder="Transaction hash" value={txid} onChange={(e) => setTxid(e.target.value)} />
-      <label>Amount sent (USDT)</label>
-      <input inputMode="decimal" placeholder="0.00" value={amt} onChange={(e) => setAmt(e.target.value.replace(/[^\d.]/g, ""))} />
-      <div style={{ marginTop: 14 }}>
-        <button className="btn block" disabled={busy || txid.trim().length < 16 || !(Number(amt) > 0)} onClick={submit}>Submit deposit</button>
-      </div>
     </div>
   );
 }
@@ -531,7 +565,14 @@ function Payout({ m, say, done }: { m: M; say: Say; done: () => void }) {
   );
 }
 
-function History({ m, cpt }: { m: M; cpt: number }) {
+function History({ m, cpt, say, done }: { m: M; cpt: number; say: Say; done: () => void }) {
+  const recheck = async (id: string) => {
+    try {
+      const r: any = await api("deposit", { action: "recheck", id });
+      say(r.status === "approved" ? "Deposit confirmed and credited." : "Not confirmed yet. Please try again in a few minutes.", r.status === "approved");
+      done();
+    } catch (e: any) { say(errText(e)); }
+  };
   const empty = !m.trades.length && !m.deposits.length && !m.payouts.length;
   return (
     <>
@@ -556,7 +597,10 @@ function History({ m, cpt }: { m: M; cpt: number }) {
           {m.deposits.map((d) => (
             <div className="hist" key={d.id}>
               <div><div className="title num">{usd(d.credited ?? d.amount, 2)} USDT</div><div className="sub">{d.network_name} · {day(d.created_at)}{d.note ? ` · ${d.note}` : ""}</div></div>
-              <span className={`pill ${stCls(d.status)}`}>{cap(d.status)}</span>
+              <div style={{ textAlign: "right" }}>
+                <span className={`pill ${stCls(d.status)}`}>{cap(d.status)}</span>
+                {d.status === "pending" && d.auto && <div><button className="btn sec sm" style={{ marginTop: 6 }} onClick={() => recheck(d.id)}>Check again</button></div>}
+              </div>
             </div>
           ))}
         </div>

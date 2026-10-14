@@ -15,7 +15,7 @@ export default route(async (req, res) => {
   await rateLimit(user.id, "ad-claim", 12);
   const { settings: s } = await ensureUser(user);
   const nonce = String(req.body?.nonce || "");
-  const strict = !!process.env.ADS_SECRET;
+  const strict = !!process.env.ADS_SECRET && s.ads_provider === "adsgram";
   const now = Date.now();
   const day = dayKey(now);
   let err = "";

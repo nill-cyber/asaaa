@@ -143,3 +143,32 @@ export async function getChart(range: Range = "1d"): Promise<{ pts: [number, num
   return { pts, candles, change: change(pts) };
 }
 const change = (p: [number, number][]) => (p.length > 1 && p[0][1] ? (p[p.length - 1][1] / p[0][1] - 1) * 100 : 0);
+
+
+export const INTERVALS = { "1m": 60000, "5m": 300000, "15m": 900000, "1h": 3600000, "4h": 14400000, "1d": 86400000 } as const;
+export type Interval = keyof typeof INTERVALS;
+const kmem = new Map<string, { at: number; c: Candle[] }>();
+
+/** সত্যিকারের candle (1m…1D): Gate.io → Binance → নিজের জমানো ৫-মিনিটের বিন্দু */
+export async function getKlines(iv: Interval, limit = 200): Promise<{ pts: [number, number][]; candles: Candle[]; change: number }> {
+  const hit = kmem.get(iv);
+  let candles: Candle[] = hit && Date.now() - hit.at < 15000 ? hit.c : [];
+  if (!candles.length) {
+    const g = await getJson(`https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=TFUEL_USDT&interval=${iv}&limit=${limit}`, 5000);
+    if (Array.isArray(g) && g.length > 3) {
+      candles = g.map((r: any[]) => [Number(r[0]) * 1000, Number(r[5]), Number(r[3]), Number(r[4]), Number(r[2])] as Candle);
+    } else {
+      const b = await getJson(`https://api.binance.com/api/v3/klines?symbol=TFUELUSDT&interval=${iv}&limit=${limit}`, 5000);
+      if (Array.isArray(b) && b.length > 3) candles = b.map((r: any[]) => [Number(r[0]), Number(r[1]), Number(r[2]), Number(r[3]), Number(r[4])] as Candle);
+    }
+    candles = candles.filter((c) => c.every((v) => Number.isFinite(v) && v > 0)).sort((a, b) => a[0] - b[0]);
+    if (candles.length > 3) kmem.set(iv, { at: Date.now(), c: candles });
+    else {
+      const h = ((await db().ref("market/history").get()).val() || {}) as Record<string, number>;
+      const own = Object.entries(h).map(([k, v]) => [Number(k) * 300000, Number(v)] as [number, number]).sort((a, b) => a[0] - b[0]);
+      candles = toCandles(own, Math.max(300000, INTERVALS[iv])).slice(-limit);
+    }
+  }
+  const pts = candles.map((c) => [c[0], c[4]] as [number, number]);
+  return { pts, candles, change: change(pts) };
+}

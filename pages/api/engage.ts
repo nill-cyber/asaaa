@@ -10,7 +10,7 @@ export default route(async (req, res) => {
   const day = dayKey();
   const sp = u.spin?.day === day ? u.spin : { day, used: 0, extra: u.spin?.extra || 0 };
   const ad = u.ads?.day === day ? u.ads : { day, coins: 0, energy: 0, spin: 0 };
-  const adsOn = s.ads_enabled && !!s.ads_block_id;
+  const adsOn = s.ads_enabled && (s.ads_provider === "monetag" ? !!s.ads_monetag_zone : !!s.ads_block_id);
   res.json({
     success: true,
     spin: {
@@ -21,7 +21,11 @@ export default route(async (req, res) => {
     },
     ads: {
       enabled: adsOn,
+      provider: s.ads_provider,
       blockId: adsOn ? s.ads_block_id : "",
+      zone: adsOn ? s.ads_monetag_zone : "",
+      format: s.ads_monetag_format,
+      inapp: s.ads_provider === "monetag" && s.ads_inapp && !!s.ads_monetag_zone ? s.ads_monetag_zone : "",
       coins: s.ads_coins,
       coinsLeft: Math.max(0, s.ads_coins_per_day - (ad.coins || 0)),
       energyLeft: Math.max(0, s.ads_energy_per_day - (ad.energy || 0)),

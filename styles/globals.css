@@ -203,3 +203,16 @@ pre, code.blk { background: #0e1626; color: #dfe6f5; padding: 12px; border-radiu
 .opt.on { border-color: var(--gold2); box-shadow: 0 0 0 3px rgba(245, 158, 11, .15); }
 .ok-t { color: var(--ok); font-weight: 700; }
 .balance-card .unit { font-size: 16px; font-weight: 700; color: var(--muted); align-self: flex-end; padding-bottom: 6px; }
+
+/* ---- profile accordion ---- */
+.grid3b { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+.acc { background: var(--card); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); margin-bottom: 10px; overflow: hidden; }
+.acc.open { border-color: #f6e3b4; }
+.acc-h { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 16px; background: transparent; border: 0; font: inherit; font-weight: 700; font-size: 16px; color: var(--text); text-align: left; cursor: pointer; }
+.acc.open .acc-h { background: linear-gradient(90deg, #fff4d6, #fff8e6); }
+.acc-i { display: grid; place-items: center; color: #7a5b00; }
+.acc-t { flex: 1; }
+.acc-c { display: grid; place-items: center; transition: transform .2s; transform: rotate(90deg); }
+.acc.open .acc-c { transform: rotate(-90deg); }
+.acc-b { padding: 6px 16px 16px; }
+.acc-b .card { box-shadow: none; border: 0; padding: 4px 0; background: transparent; margin-bottom: 8px; }

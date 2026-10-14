@@ -1,7 +1,7 @@
 import { authenticate } from "@/lib/auth";
 import { route } from "@/lib/api";
 import { db } from "@/lib/firebase";
-import { ensureUser, boostActive, pendingMining } from "@/lib/user";
+import { ensureUser, boostActive, pendingMining, settleCommission, quoteBoost } from "@/lib/user";
 import { dayKey } from "@/lib/log";
 
 /** Boost, Staking, Daily reward, Referral — Boost ট্যাবের সব তথ্য একসাথে */
@@ -9,6 +9,8 @@ export default route(async (req, res) => {
   const user = authenticate(req);
   const { u, settings: s } = await ensureUser(user);
   const now = Date.now();
+  const gained = await settleCommission(user.id, true);
+  if (gained) { u.ref_earned = (u.ref_earned || 0) + gained; u.ref_comm = (u.ref_comm || 0) + gained; }
   const [bp, sp, refs, pools] = await Promise.all([
     db().ref("boost_plans").get(),
     db().ref("stake_plans").get(),
@@ -20,10 +22,12 @@ export default route(async (req, res) => {
   const boosts = Object.entries((bp.val() || {}) as Record<string, any>)
     .filter(([, p]) => p.is_active)
     .map(([id, p]) => {
+      const q = quoteBoost(u.boosts, { id, price: p.price, duration_days: p.duration_days }, now);
       const mine = u.boosts?.[id];
       return {
         id, name: p.name, price: p.price, tap: p.tap_bonus, en: p.energy_bonus, regen: p.regen_bonus, mph: p.mine_per_hour, days: p.duration_days,
-        active: !!mine && boostActive(mine, now), expires_at: mine?.expires_at || 0,
+        active: q.kind === "current", expires_at: q.kind === "current" ? mine?.expires_at || 0 : 0,
+        kind: q.kind, cost: q.cost, starts_at: q.kind === "queued" || q.kind === "downgrade" ? q.startsAt : 0,
       };
     })
     .sort((a, b) => a.price - b.price);
@@ -52,7 +56,7 @@ export default route(async (req, res) => {
   const refList = Object.entries((refs.val() || {}) as Record<string, any>)
     .sort(([, a], [, b]) => b.at - a.at)
     .slice(0, 20)
-    .map(([id, r]) => ({ id, name: r.name, at: r.at, bonus: r.bonus }));
+    .map(([id, r]) => ({ id, name: r.name, at: r.at, bonus: r.bonus, comm: r.comm || 0 }));
 
   res.json({
     success: true,
@@ -66,6 +70,9 @@ export default route(async (req, res) => {
       inviteeBonus: s.invitee_bonus,
       count: u.ref_count || 0,
       earned: u.ref_earned || 0,
+      commission: u.ref_comm || 0,
+      commissionPct: s.referral_commission_pct,
+      gained,
       pending: !!u.referred_by && !u.ref_paid,
       list: refList,
     },

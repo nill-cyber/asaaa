@@ -2,7 +2,7 @@ import { db } from "./firebase";
 import { HttpError } from "./auth";
 import { COINS_PER_UNIT, MIN_WITHDRAW, UNIT_LABEL, WITHDRAW_METHODS } from "./config";
 
-export interface DepositNet { id: string; name: string; address: string; min: number; note: string }
+export interface DepositNet { id: string; name: string; address: string; min: number; note: string; binance_network?: string }
 export interface PayoutNet { id: string; name: string; min: number; fee: number; regex: string }
 
 export interface Settings {
@@ -12,6 +12,7 @@ export interface Settings {
   referral_enabled: boolean;
   referrer_bonus: number;
   invitee_bonus: number;
+  referral_commission_pct: number; // রেফারি-র আয়ের % রেফারার পায় (stake/trade বাদে); ০ = বন্ধ
   referral_max: number; // একজন সর্বোচ্চ কতজনের জন্য bonus পাবে
   referral_link: string; // https://t.me/<bot>/<app>
   mine_cap_hours: number; // auto-mining সর্বোচ্চ কত ঘণ্টা জমে (Collect না করলে)
@@ -27,6 +28,8 @@ export interface Settings {
   price_override: number; // >0 হলে live দামের বদলে এই দাম (USDT)
   deposit_enabled: boolean;
   deposit_networks: DepositNet[];
+  binance_auto: boolean; // Binance deposit history মিলিয়ে নিজে approve
+  binance_auto_max: number; // এর বেশি হলে verify হয় কিন্তু admin approve করে (USDT)
   payout_enabled: boolean;
   payout_networks: PayoutNet[];
 
@@ -57,6 +60,10 @@ export interface Settings {
   lb_prizes: number[]; // সাপ্তাহিক top N-এর prize (coin)
   ads_enabled: boolean;
   ads_block_id: string; // Adsgram block id
+  ads_provider: "monetag" | "adsgram";
+  ads_monetag_zone: string; // Monetag zone id (যেমন 12010944)
+  ads_monetag_format: "interstitial" | "popup"; // reward-এর বিজ্ঞাপনের ধরন
+  ads_inapp: boolean; // Monetag in-app interstitial (নিজে নিজে মাঝেমধ্যে)
   ads_coins: number; // একটা ad দেখলে bonus
   ads_coins_per_day: number;
   ads_energy_per_day: number; // ad দেখে energy refill দিনে কতবার
@@ -69,6 +76,7 @@ export const DEFAULTS: Settings = {
   referral_enabled: true,
   referrer_bonus: 500,
   invitee_bonus: 200,
+  referral_commission_pct: 3,
   referral_max: 100,
   referral_link: process.env.NEXT_PUBLIC_BOT_LINK || "",
   mine_cap_hours: 8,
@@ -83,6 +91,8 @@ export const DEFAULTS: Settings = {
   price_override: 0,
   deposit_enabled: false,
   deposit_networks: [],
+  binance_auto: false,
+  binance_auto_max: 200,
   payout_enabled: false,
   payout_networks: [],
   earn_per_tap: 1,
@@ -119,6 +129,10 @@ export const DEFAULTS: Settings = {
   lb_prizes: [5000, 3000, 2000, 1000, 1000],
   ads_enabled: false,
   ads_block_id: "",
+  ads_provider: "monetag",
+  ads_monetag_zone: "12010944",
+  ads_monetag_format: "interstitial",
+  ads_inapp: false,
   ads_coins: 200,
   ads_coins_per_day: 5,
   ads_energy_per_day: 2,
@@ -190,7 +204,9 @@ export function parseSettings(b: any, cur: Settings): Settings {
       const name = txt(x.name, 30);
       const address = txt(x.address, 100);
       if (!name || address.length < 10) throw new HttpError(400, "Each deposit network needs a name and an address");
-      return { id: slug(name), name, address, min: n0(x.min, "deposit min", 1e6), note: txt(x.note, 120) };
+      const bn = txt(x.binance_network, 12).toUpperCase();
+      if (bn && !/^[A-Z0-9]{2,12}$/.test(bn)) throw new HttpError(400, "Binance network code looks wrong (e.g. TRX, BSC, ETH)");
+      return { id: slug(name), name, address, min: n0(x.min, "deposit min", 1e6), note: txt(x.note, 120), binance_network: bn };
     });
     if (new Set(dnets.map((d: DepositNet) => d.id)).size !== dnets.length) throw new HttpError(400, "Duplicate deposit network names");
   }
@@ -245,6 +261,7 @@ export function parseSettings(b: any, cur: Settings): Settings {
     referrer_bonus: Math.floor(num(b.referrer_bonus, "referrer_bonus", 0, 1e9, cur.referrer_bonus)),
     invitee_bonus: Math.floor(num(b.invitee_bonus, "invitee_bonus", 0, 1e9, cur.invitee_bonus)),
     referral_max: Math.floor(num(b.referral_max, "referral_max", 0, 100000, cur.referral_max)),
+    referral_commission_pct: num(b.referral_commission_pct, "referral_commission_pct", 0, 50, cur.referral_commission_pct),
     referral_link: link,
     mine_cap_hours: num(b.mine_cap_hours, "mine_cap_hours", 1, 168, cur.mine_cap_hours),
     trade_enabled: bool("trade_enabled"),
@@ -258,6 +275,8 @@ export function parseSettings(b: any, cur: Settings): Settings {
     price_override: num(b.price_override, "price_override", 0, 1e6, cur.price_override),
     deposit_enabled: bool("deposit_enabled"),
     deposit_networks: dnets,
+    binance_auto: bool("binance_auto"),
+    binance_auto_max: num(b.binance_auto_max, "binance_auto_max", 0, 1e6, cur.binance_auto_max),
     payout_enabled: bool("payout_enabled"),
     payout_networks: pnets,
     earn_per_tap: Math.floor(num(b.earn_per_tap, "earn_per_tap", 1, 1000, cur.earn_per_tap)),
@@ -290,6 +309,10 @@ export function parseSettings(b: any, cur: Settings): Settings {
     lb_prizes: lbp,
     ads_enabled: bool("ads_enabled"),
     ads_block_id: str(b.ads_block_id, 40, cur.ads_block_id),
+    ads_provider: ["monetag", "adsgram"].includes(b.ads_provider) ? b.ads_provider : cur.ads_provider,
+    ads_monetag_zone: (() => { const z = str(b.ads_monetag_zone, 12, cur.ads_monetag_zone); if (z && !/^\d{4,12}$/.test(z)) throw new HttpError(400, "Monetag zone must be digits only"); return z; })(),
+    ads_monetag_format: ["interstitial", "popup"].includes(b.ads_monetag_format) ? b.ads_monetag_format : cur.ads_monetag_format,
+    ads_inapp: bool("ads_inapp"),
     ads_coins: Math.floor(num(b.ads_coins, "ads_coins", 0, 1e9, cur.ads_coins)),
     ads_coins_per_day: Math.floor(num(b.ads_coins_per_day, "ads_coins_per_day", 0, 100, cur.ads_coins_per_day)),
     ads_energy_per_day: Math.floor(num(b.ads_energy_per_day, "ads_energy_per_day", 0, 100, cur.ads_energy_per_day)),

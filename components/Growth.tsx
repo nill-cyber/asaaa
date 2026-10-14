@@ -4,10 +4,10 @@ import Icon from "@/components/Icons";
 
 type Say = (t: string, ok?: boolean) => void;
 interface G {
-  boosts: { plans: { id: string; name: string; price: number; tap: number; en: number; regen: number; mph: number; days: number; active: boolean; expires_at: number }[]; mining: { pending: number; perHour: number; capHours: number } };
+  boosts: { plans: { id: string; name: string; price: number; tap: number; en: number; regen: number; mph: number; days: number; active: boolean; expires_at: number; kind: string; cost: number; starts_at: number }[]; mining: { pending: number; perHour: number; capHours: number } };
   staking: { plans: { id: string; name: string; days: number; pct: number; min: number; max: number; left: number | null }[]; stakes: { id: string; name: string; amount: number; reward: number; end: number; status: string; ready: boolean }[] };
   daily: { enabled: boolean; claimedToday: boolean; streak: number; rewards: number[]; nextIndex: number };
-  referral: { enabled: boolean; link: string; referrerBonus: number; inviteeBonus: number; count: number; earned: number; pending: boolean; list: { id: string; name: string; at: number; bonus: number }[] };
+  referral: { enabled: boolean; link: string; referrerBonus: number; inviteeBonus: number; count: number; earned: number; commission: number; commissionPct: number; gained: number; pending: boolean; list: { id: string; name: string; at: number; bonus: number; comm: number }[] };
 }
 const left = (t: number) => {
   const ms = Math.max(0, t - Date.now());
@@ -154,16 +154,24 @@ function Boosts({ g, cpt, say, done }: { g: G; cpt: number; say: Say; done: () =
             </div>
           </div>
           <div className="row" style={{ marginTop: 12 }}>
-            <span className="reward">{fmtTf(p.price, cpt)} TFUEL</span>
-            {p.active ? (
+            <span className="reward">{fmtTf(p.kind === "upgrade" ? p.cost : p.price, cpt)} TFUEL</span>
+            {p.kind === "current" ? (
               <span className="pill ok"><Icon name="check" size={13} /> Active{p.expires_at ? ` · ${left(p.expires_at)}` : ""}</span>
+            ) : p.kind === "queued" ? (
+              <span className="pill warn">Starts in {left(p.starts_at)}</span>
+            ) : p.kind === "blocked" ? (
+              <span className="xs muted">Not available now</span>
             ) : (
-              <button className="btn sm" disabled={busy === p.id} onClick={() => act(p.id, async () => { await api("buy-boost", { planId: p.id }); return `${p.name} activated`; })}>Buy boost</button>
+              <button className="btn sm" disabled={busy === p.id} onClick={() => act(p.id, async () => { const r = await api<any>("buy-boost", { planId: p.id }); return r.kind === "downgrade" ? `${p.name} will start when your current boost ends` : r.kind === "upgrade" ? `Upgraded to ${p.name}` : `${p.name} activated`; })}>
+                {p.kind === "upgrade" ? "Upgrade" : p.kind === "downgrade" ? "Switch later" : "Buy boost"}
+              </button>
             )}
           </div>
+          {p.kind === "upgrade" && p.cost < p.price && <div className="xs muted" style={{ marginTop: 6 }}>Price reduced by the unused value of your current boost.</div>}
+          {p.kind === "downgrade" && <div className="xs muted" style={{ marginTop: 6 }}>Starts when your current boost ends. You pay now.</div>}
         </div>
       ))}
-      <div className="xs muted" style={{ textAlign: "center" }}>Boosts are bought with your in-app TFUEL balance.</div>
+      <div className="xs muted" style={{ textAlign: "center" }}>One boost at a time, bought with your in-app TFUEL. A better plan upgrades now; a cheaper one starts after your current plan ends.</div>
     </>
   );
 }
@@ -254,7 +262,7 @@ function Friends({ g, cpt, say }: { g: G; cpt: number; say: Say }) {
           <div className="ico green"><Icon name="users" /></div>
           <div>
             <div className="title">Invite friends</div>
-            <div className="sub">You get +{fmtTf(r.referrerBonus, cpt)} TFUEL, your friend gets +{fmtTf(r.inviteeBonus, cpt)} — once they finish their first task.</div>
+            <div className="sub">You get +{fmtTf(r.referrerBonus, cpt)} TFUEL, your friend gets +{fmtTf(r.inviteeBonus, cpt)} — once they finish their first task.{r.commissionPct > 0 ? ` Plus ${r.commissionPct}% of everything they earn, for life.` : ""}</div>
           </div>
         </div>
         {r.link ? (
@@ -272,12 +280,12 @@ function Friends({ g, cpt, say }: { g: G; cpt: number; say: Say }) {
       </div>
       <div className="grid2" style={{ marginBottom: 12 }}>
         <div className="card" style={{ marginBottom: 0 }}><div className="sub">Friends joined</div><div className="title num" style={{ fontSize: 20 }}>{r.count}</div></div>
-        <div className="card" style={{ marginBottom: 0 }}><div className="sub">Earned</div><div className="title num" style={{ fontSize: 20 }}>{fmtTf(r.earned, cpt)}</div></div>
+        <div className="card" style={{ marginBottom: 0 }}><div className="sub">Earned</div><div className="title num" style={{ fontSize: 20 }}>{fmtTf(r.earned, cpt)}</div>{r.commissionPct > 0 && <div className="xs muted">incl. {fmtTf(r.commission, cpt)} from {r.commissionPct}% commission</div>}</div>
       </div>
       {r.list.length > 0 && (
         <div className="card">
           {r.list.map((f) => (
-            <div className="hist" key={f.id}><span>{f.name}</span><b className="num">+{fmtTf(f.bonus, cpt)}</b></div>
+            <div className="hist" key={f.id}><span>{f.name}</span><b className="num">+{fmtTf(f.bonus + (f.comm || 0), cpt)}</b></div>
           ))}
         </div>
       )}

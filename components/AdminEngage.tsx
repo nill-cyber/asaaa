@@ -40,7 +40,7 @@ export default function EngagePage({ call }: { call: Call }) {
           notify_enabled: s.notify_enabled, orders_enabled: s.orders_enabled, max_open_orders: s.max_open_orders, max_alerts: s.max_alerts,
           spin_enabled: s.spin_enabled, spin_prizes: s.spin_prizes.map((p: any) => ({ coins: p.coins, weight: p.weight })), spin_free_per_day: s.spin_free_per_day,
           lb_enabled: s.lb_enabled, lb_prizes: s.lb_prizes,
-          ads_enabled: s.ads_enabled, ads_block_id: s.ads_block_id, ads_coins: s.ads_coins, ads_coins_per_day: s.ads_coins_per_day, ads_energy_per_day: s.ads_energy_per_day, ads_spin_per_day: s.ads_spin_per_day,
+          ads_enabled: s.ads_enabled, ads_provider: s.ads_provider, ads_monetag_zone: s.ads_monetag_zone, ads_monetag_format: s.ads_monetag_format, ads_inapp: s.ads_inapp, ads_block_id: s.ads_block_id, ads_coins: s.ads_coins, ads_coins_per_day: s.ads_coins_per_day, ads_energy_per_day: s.ads_energy_per_day, ads_spin_per_day: s.ads_spin_per_day,
         },
       },
       "Saved"
@@ -130,13 +130,17 @@ export default function EngagePage({ call }: { call: Call }) {
       </div>
 
       <div className="card">
-        <div className="row"><div><div className="title">Rewarded ads (Adsgram)</div><div className="sub">Create an ad block at adsgram.ai, paste its Block ID here. Users watch an ad for bonus coins, an energy refill or an extra spin.</div></div><Toggle on={s.ads_enabled} onChange={(v) => set("ads_enabled", v)} /></div>
+        <div className="row"><div><div className="title">Rewarded ads</div><div className="sub">Users watch an ad for bonus coins, an energy refill or an extra spin. Choose Monetag (zone ID) or Adsgram (block ID).</div></div><Toggle on={s.ads_enabled} onChange={(v) => set("ads_enabled", v)} /></div>
         <div className="grid3">
+          <div><label>Ad network</label><select value={s.ads_provider} onChange={(e) => set("ads_provider", e.target.value)}><option value="monetag">Monetag</option><option value="adsgram">Adsgram</option></select></div>
+          <div><label>Monetag zone ID</label><input inputMode="numeric" value={s.ads_monetag_zone} onChange={(e) => set("ads_monetag_zone", e.target.value.replace(/\D/g, ""))} placeholder="12010944" /></div>
+          <div><label>Monetag reward format</label><select value={s.ads_monetag_format} onChange={(e) => set("ads_monetag_format", e.target.value)}><option value="interstitial">Rewarded interstitial</option><option value="popup">Rewarded popup</option></select></div>
           <div><label>Adsgram Block ID</label><input value={s.ads_block_id} onChange={(e) => set("ads_block_id", e.target.value)} placeholder="e.g. 12345" /></div>
           <div><label>Coins per ad</label><input inputMode="numeric" value={s.ads_coins} onChange={(e) => set("ads_coins", e.target.value)} /><div className="xs muted" style={{ marginTop: 3 }}>= {tf(s.ads_coins)} TFUEL</div></div>
           <div><label>Bonus ads / day</label><input inputMode="numeric" value={s.ads_coins_per_day} onChange={(e) => set("ads_coins_per_day", e.target.value)} /></div>
           <div><label>Energy-refill ads / day</label><input inputMode="numeric" value={s.ads_energy_per_day} onChange={(e) => set("ads_energy_per_day", e.target.value)} /></div>
           <div><label>Extra-spin ads / day</label><input inputMode="numeric" value={s.ads_spin_per_day} onChange={(e) => set("ads_spin_per_day", e.target.value)} /></div>
+          <div><label>Monetag in-app interstitial</label><select value={s.ads_inapp ? "1" : "0"} onChange={(e) => set("ads_inapp", e.target.value === "1")}><option value="0">Off</option><option value="1">On (automatic, now and then)</option></select></div>
         </div>
         <div className="xs muted" style={{ marginTop: 8 }}>
           Anti-cheat: the server times each ad and enforces daily limits. For stronger proof, set <code>ADS_SECRET</code> in Vercel and add this Reward URL in Adsgram:

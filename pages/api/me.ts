@@ -1,7 +1,7 @@
 import { authenticate } from "@/lib/auth";
 import { route } from "@/lib/api";
 import { db } from "@/lib/firebase";
-import { ensureUser, currentEnergy, effective } from "@/lib/user";
+import { ensureUser, currentEnergy, effective, settleCommission } from "@/lib/user";
 import { ArticleSite, Run } from "@/lib/chain";
 import { peekPrice } from "@/lib/market";
 import { dayKey } from "@/lib/log";
@@ -11,6 +11,7 @@ export default route(async (req, res) => {
   const user = authenticate(req);
   const { u, settings } = await ensureUser(user, { soft: true, touch: true });
   const now = Date.now();
+  if (u.ref_count) { const g = await settleCommission(user.id); if (g) u.balance += g; }
 
   const cfg = {
     minWithdraw: settings.min_withdraw,

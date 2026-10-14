@@ -5,7 +5,8 @@ export interface ArticleSite {
   urls: string[];
   reward: number;
   cooldown_minutes: number;
-  dwell_seconds: number;
+  dwell_seconds: number; // মোট সময় প্রতি আর্টিকেলে
+  lock_seconds?: number; // শুরুতে এতক্ষণ scroll বন্ধ (শুধু ওপরটা পড়া); তারপর বাকি সময় scroll করা যায়
   is_active: boolean;
 }
 

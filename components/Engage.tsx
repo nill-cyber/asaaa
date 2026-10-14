@@ -5,7 +5,7 @@ import Icon from "@/components/Icons";
 type Say = (t: string, ok?: boolean) => void;
 export interface Engage {
   spin: { enabled: boolean; prizes: number[]; free: number; extra: number };
-  ads: { enabled: boolean; blockId: string; coins: number; coinsLeft: number; energyLeft: number; spinLeft: number };
+  ads: { enabled: boolean; provider?: string; zone?: string; format?: string; inapp?: string; blockId: string; coins: number; coinsLeft: number; energyLeft: number; spinLeft: number };
   notify: { available: boolean; on: boolean };
 }
 
@@ -22,22 +22,54 @@ export function useEngage() {
   return { e, load };
 }
 
-/** Rewarded ad (Adsgram). server: ad-start → (ad) → ad-claim */
-export function useAd(blockId: string, say: Say) {
+type AdCfg = Engage["ads"] | undefined;
+
+/** Monetag SDK একবারই যোগ হয়: window.show_<zone> */
+function loadMonetag(zone: string) {
+  if (typeof document === "undefined" || !zone || document.getElementById("monetag-sdk-" + zone)) return;
+  const s = document.createElement("script");
+  s.id = "monetag-sdk-" + zone;
+  s.src = "//libtl.com/sdk.js";
+  s.async = true;
+  s.setAttribute("data-zone", zone);
+  s.setAttribute("data-sdk", "show_" + zone);
+  document.head.appendChild(s);
+}
+
+/** Rewarded ad (Monetag বা Adsgram). server: ad-start → (ad) → ad-claim */
+export function useAd(ads: AdCfg, say: Say) {
   const [busy, setBusy] = useState(false);
+  const monetag = ads?.enabled && ads.provider === "monetag" ? ads.zone || "" : "";
+  const blockId = ads?.enabled && ads.provider !== "monetag" ? ads.blockId : "";
   useEffect(() => {
+    if (monetag) return loadMonetag(monetag);
     if (!blockId || typeof document === "undefined" || (window as any).Adsgram || document.getElementById("adsgram-sdk")) return;
     const s = document.createElement("script");
     s.id = "adsgram-sdk";
     s.src = "https://sad.adsgram.ai/js/sad.min.js";
     s.async = true;
     document.head.appendChild(s);
-  }, [blockId]);
+  }, [blockId, monetag]);
   const watch = async (purpose: "coins" | "energy" | "spin"): Promise<any | null> => {
     if (busy) return null;
     setBusy(true);
     try {
       const { nonce } = await api<{ nonce: string }>("ad-start", { purpose });
+      if (monetag) {
+        const show = (window as any)["show_" + monetag];
+        if (typeof show !== "function") {
+          say("Ads aren't ready yet. Please try again in a moment.");
+          return null;
+        }
+        try {
+          if (ads?.format === "popup") await show("pop");
+          else await show();
+        } catch {
+          say("No ad available right now, or it was closed early.");
+          return null;
+        }
+        return await api<any>("ad-claim", { nonce });
+      }
       const A = (window as any).Adsgram;
       if (!A) {
         say("Ads aren't ready yet. Please try again in a moment.");
@@ -65,6 +97,28 @@ export function useAd(blockId: string, say: Say) {
   return { watch, busy };
 }
 
+/** Monetag in-app interstitial: admin চালু করলে অ্যাপ খোলার সময় একবার চালু হয় (নিজে নিজে মাঝেমধ্যে দেখায়) */
+export function InAppAds() {
+  const { e } = useEngage();
+  const zone = e?.ads.inapp || "";
+  useEffect(() => {
+    if (!zone) return;
+    loadMonetag(zone);
+    let tries = 0;
+    const t = setInterval(() => {
+      const show = (window as any)["show_" + zone];
+      if (typeof show === "function") {
+        clearInterval(t);
+        try {
+          show({ type: "inApp", inAppSettings: { frequency: 2, capping: 0.1, interval: 30, timeout: 5, everyPage: false } });
+        } catch {}
+      } else if (++tries > 20) clearInterval(t);
+    }, 500);
+    return () => clearInterval(t);
+  }, [zone]);
+  return null;
+}
+
 const COLORS = ["#fff4d6", "#ffe3a3", "#fff4d6", "#ffd978", "#fff4d6", "#ffcc57", "#fff4d6", "#ffbf3a", "#fff4d6", "#ffb31f", "#fff4d6", "#ffa60a"];
 
 /** Lucky Spin wheel */
@@ -72,7 +126,7 @@ export function SpinCard({ cpt, say, reload }: { cpt: number; say: Say; reload: 
   const { e, load } = useEngage();
   const [rot, setRot] = useState(0);
   const [busy, setBusy] = useState(false);
-  const ad = useAd(e?.ads.enabled ? e.ads.blockId : "", say);
+  const ad = useAd(e?.ads, say);
   const spinning = useRef(false);
   if (!e || !e.spin.enabled) return null;
   const P = e.spin.prizes;
@@ -182,7 +236,7 @@ export function PromoCard({ cpt, say, reload }: { cpt: number; say: Say; reload:
 /** Watch-an-ad bonus (coins). Shown on the Tasks tab */
 export function AdBonus({ cpt, say, reload }: { cpt: number; say: Say; reload: () => void }) {
   const { e, load } = useEngage();
-  const ad = useAd(e?.ads.enabled ? e.ads.blockId : "", say);
+  const ad = useAd(e?.ads, say);
   if (!e || !e.ads.enabled || e.ads.coins <= 0) return null;
   const go = async () => {
     const r = await ad.watch("coins");
@@ -211,7 +265,7 @@ export function AdBonus({ cpt, say, reload }: { cpt: number; say: Say; reload: (
 /** Shown on the Tap screen when energy is empty */
 export function AdRefill({ say, reload }: { say: Say; reload: () => void }) {
   const { e, load } = useEngage();
-  const ad = useAd(e?.ads.enabled ? e.ads.blockId : "", say);
+  const ad = useAd(e?.ads, say);
   if (!e || !e.ads.enabled || e.ads.energyLeft < 1) return null;
   const go = async () => {
     const r = await ad.watch("energy");

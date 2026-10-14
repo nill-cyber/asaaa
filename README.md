@@ -73,3 +73,9 @@ Admin → **Market & Trading**: Trading master switch (ডিফল্টে ব
 - সব Admin → **Engagement** ট্যাব থেকে নিয়ন্ত্রণ।
 - Vercel Environment Variables-এ যোগ করুন: `CRON_SECRET` (আবশ্যক alert/order/বার্তার জন্য), `ADS_SECRET` (ঐচ্ছিক)।
 - cron-job.org (ফ্রি) এ `https://YOUR-SITE/api/cron?key=CRON_SECRET` প্রতি ১–৫ মিনিটে চালান। (vercel.json-এ দিনে একবারের backup cron আছে।)
+
+## Binance auto-approve deposits (v8)
+1. Binance → API Management → create a key with **only "Enable Reading"** (no trading, withdrawals or transfers; keys with those are rejected).
+2. Admin → Market & Trading → *Binance auto-approve*: paste key + secret (stored encrypted), then for each deposit network set the **Binance network code** (TRX, BSC, ETH…) and use your **Binance deposit address**.
+3. Turn the switch on, set the auto limit, press *Save changes*.
+Users get an exact amount (e.g. 50.37 USDT); only a deposit with that amount, address, network and TxID is credited. Larger or mismatched deposits stay in the USDT desk for you.

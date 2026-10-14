@@ -417,7 +417,7 @@ function Sites({ call }: { call: Call }) {
   return (
     <>
       <Head2 title="Article Sites" sub="Each site is a chain of articles. The code appears on the last one.">
-        <button className="btn" onClick={() => setEdit({ name: "", urls: "", reward: 500, cooldown_minutes: 60, dwell_seconds: 15, is_active: true })}>
+        <button className="btn" onClick={() => setEdit({ name: "", urls: "", reward: 500, cooldown_minutes: 60, dwell_seconds: 15, lock_seconds: 5, is_active: true })}>
           <Icon name="plus" size={16} /> New site
         </button>
       </Head2>
@@ -433,7 +433,7 @@ function Sites({ call }: { call: Call }) {
           <tbody>
             {sites.map((s) => (
               <tr key={s.id}>
-                <td><div className="b">{s.name}</div><div className="xs muted">{s.urls?.length} articles · {s.dwell_seconds}s each</div></td>
+                <td><div className="b">{s.name}</div><div className="xs muted">{s.urls?.length} articles · {s.dwell_seconds}s each ({s.lock_seconds ?? 5}s top read + {s.dwell_seconds - (s.lock_seconds ?? 5)}s scroll)</div></td>
                 <td className="num">{fmt(s.reward)}</td>
                 <td>{s.cooldown_minutes}m</td>
                 <td className="num">{s.stats.started}</td>
@@ -463,6 +463,9 @@ function Sites({ call }: { call: Call }) {
             <div><label>Cooldown (min)</label><input inputMode="numeric" value={edit.cooldown_minutes} onChange={(e) => setEdit({ ...edit, cooldown_minutes: e.target.value })} /></div>
             <div><label>Seconds per article</label><input inputMode="numeric" value={edit.dwell_seconds} onChange={(e) => setEdit({ ...edit, dwell_seconds: e.target.value })} /></div>
           </div>
+          <label>Top-read lock (seconds)</label>
+          <input inputMode="numeric" value={edit.lock_seconds ?? 5} onChange={(e) => setEdit({ ...edit, lock_seconds: e.target.value })} />
+          <div className="xs muted" style={{ marginTop: 4 }}>The reader must stay at the top of the article for this long (scrolling is locked). After that they can scroll for the rest of the time. Example: 15 total = 5 locked + 10 scrolling.</div>
           <div className="toolbar" style={{ marginTop: 14, justifyContent: "flex-end" }}>
             <button className="btn sec" onClick={() => setEdit(null)}>Cancel</button>
             <button className="btn" onClick={async () => { if (await call({ action: "saveSite", siteId: edit.id, ...edit }, "Saved")) { setEdit(null); load(); } }}>Save</button>
@@ -768,6 +771,42 @@ function Logs({ call }: { call: Call }) {
   );
 }
 
+/* ---------------- Binance auto-approve ---------------- */
+function BinanceCard({ s, set, call }: { s: any; set: (k: string, v: any) => void; call: Call }) {
+  const [st, setSt] = useState<any>(null);
+  const [key, setKey] = useState("");
+  const [secret, setSecret] = useState("");
+  const load = useCallback(async () => setSt(await call({ action: "binanceStatus" })), [call]);
+  useEffect(() => { load(); }, [load]);
+  const last = st?.last;
+  return (
+    <div className="card">
+      <div className="row"><div><div className="title">Binance auto-approve</div><div className="sub">Matches each deposit TxID against your Binance deposit history and credits it automatically. Only deposits that match the exact address, network, coin and amount are credited.</div></div><Toggle on={!!s.binance_auto} onChange={(v) => set("binance_auto", v)} /></div>
+      <div className="banner warn" style={{ marginTop: 12 }}><Icon name="alert" size={18} /><span>Create the API key in Binance with <b>only “Enable Reading”</b>. Keys that can trade, withdraw or transfer are rejected. The secret is encrypted before it&apos;s stored and is never shown again. Your deposit addresses must be your Binance USDT deposit addresses. Binance can block servers in some regions — use “Test connection” after saving.</span></div>
+      {st?.key ? (
+        <div className="row" style={{ marginTop: 12 }}>
+          <div><div className="b">Key {st.key.hint} <span className="muted sm">· from {st.key.src === "env" ? "server settings" : "this panel"}</span></div>
+            {last && <div className={`xs ${last.ok ? "" : "muted"}`}><span className={`tag ${last.ok ? "ok" : "err"}`}>{last.ok ? "OK" : "Problem"}</span> {last.msg} · {when(last.at)}</div>}</div>
+          <div className="gap">
+            <button className="btn sec sm" onClick={async () => { await call({ action: "binanceTest" }, "Checked"); load(); }}>Test connection</button>
+            {st.key.src === "db" && <button className="btn danger sm" onClick={async () => { if (confirm("Remove the saved Binance key?")) { await call({ action: "binanceClear" }, "Removed"); load(); } }}>Remove</button>}
+          </div>
+        </div>
+      ) : (
+        <div className="grid2" style={{ marginTop: 12 }}>
+          <div><label style={{ marginTop: 0 }}>API key</label><input autoComplete="off" value={key} onChange={(e) => setKey(e.target.value.trim())} /></div>
+          <div><label style={{ marginTop: 0 }}>Secret key</label><input autoComplete="off" type="password" value={secret} onChange={(e) => setSecret(e.target.value.trim())} /></div>
+          <div><button className="btn sm" disabled={key.length < 20 || secret.length < 20} onClick={async () => { if (await call({ action: "binanceSave", key, secret }, "Key verified and saved")) { setKey(""); setSecret(""); load(); } }}>Verify & save key</button></div>
+        </div>
+      )}
+      <label>Auto-approve limit per deposit (USDT)</label>
+      <input inputMode="decimal" value={s.binance_auto_max} onChange={(e) => set("binance_auto_max", e.target.value)} />
+      <div className="xs muted" style={{ marginTop: 6 }}>Larger deposits are still verified, but wait for your approval. Remember to press “Save changes” at the top. Pending deposits are rechecked by the cron job and when the user presses recheck.</div>
+      <button className="btn sec sm" style={{ marginTop: 10 }} onClick={async () => { const d: any = await call({ action: "binanceRecheck" }); if (d) alert(`Checked ${d.checked}, approved ${d.approved}`); }}>Recheck pending now</button>
+    </div>
+  );
+}
+
 /* ---------------- USDT desk ---------------- */
 function UsdtDesk({ call }: { call: Call }) {
   const tf = useTf();
@@ -824,10 +863,12 @@ function UsdtDesk({ call }: { call: Call }) {
             <div>
               <div className="b num" style={{ fontSize: 17 }}>Claims {d.amount} USDT <span className="muted sm">· {d.network_name}</span></div>
               <div className="xs" style={{ wordBreak: "break-all", userSelect: "text", marginTop: 2 }}>TxID: {d.txid} <button className="btn ghost sm" style={{ padding: 2 }} onClick={() => navigator.clipboard?.writeText(d.txid)}><Icon name="copy" size={13} /></button></div>
-              <div className="xs muted">{d.name} · ID {d.uid} · {when(d.created_at)}{d.credited ? ` · credited ${d.credited}` : ""}{d.note ? ` · ${d.note}` : ""}</div>
+              <div className="xs muted">{d.name} · ID {d.uid} · {when(d.created_at)}{d.credited ? ` · credited ${d.credited}` : ""}{d.note ? ` · ${d.note}` : ""}{d.auto_note && d.status === "pending" ? ` · ${d.auto_note}` : ""}</div>
+              {d.auto && <div className="xs" style={{ marginTop: 2 }}><span className={`tag ${d.by === "binance-auto" ? "ok" : d.verified ? "ok" : "warn"}`}>{d.by === "binance-auto" ? "Auto-approved via Binance" : d.verified ? `Verified on Binance: ${d.verified} USDT` : "Binance auto-check"}</span></div>}
             </div>
-            <span className={`tag ${d.status === "approved" ? "ok" : d.status === "rejected" ? "err" : "warn"}`}>{d.status}</span>
+            <span className={`tag ${d.status === "approved" ? "ok" : d.status === "rejected" ? "err" : "warn"}`}>{d.status}{d.by === "binance-auto" ? " · auto" : ""}</span>
           </div>
+          {d.auto_note && d.status === "pending" && <div className="xs" style={{ marginTop: 6 }}>🤖 {d.auto_note}{d.verified ? ` — you can credit ${d.verified}` : ""}</div>}
           {d.status === "pending" && (
             <>
               <div className="grid2" style={{ marginTop: 10 }}>
@@ -883,7 +924,7 @@ function MarketPage({ call }: { call: Call }) {
   const set = (k: string, v: any) => setS({ ...s, [k]: v });
   const setNet = (key: string, i: number, patch: any) => set(key, s[key].map((n: any, j: number) => (j === i ? { ...n, ...patch } : n)));
   const save = async () => {
-    const keys = ["trade_enabled", "buy_enabled", "sell_enabled", "coins_per_tfuel", "trade_fee_pct", "min_trade_usdt", "max_trade_usdt", "daily_trade_limit_usdt", "price_override", "deposit_enabled", "deposit_networks", "payout_enabled", "payout_networks"];
+    const keys = ["trade_enabled", "buy_enabled", "sell_enabled", "coins_per_tfuel", "trade_fee_pct", "min_trade_usdt", "max_trade_usdt", "daily_trade_limit_usdt", "price_override", "deposit_enabled", "deposit_networks", "binance_auto", "binance_auto_max", "payout_enabled", "payout_networks"];
     const body: any = {};
     keys.forEach((k) => (body[k] = s[k]));
     const d: any = await call({ action: "saveSettings", settings: body }, "Saved");
@@ -931,11 +972,15 @@ function MarketPage({ call }: { call: Call }) {
             <input value={n.address} onChange={(e) => setNet("deposit_networks", i, { address: e.target.value })} />
             <label>Note for users (optional)</label>
             <input value={n.note || ""} onChange={(e) => setNet("deposit_networks", i, { note: e.target.value })} />
+            <label>Binance network code (for auto-approve — leave empty for manual)</label>
+            <input value={n.binance_network || ""} placeholder="TRX = TRC20 · BSC = BEP20 · ETH = ERC20" onChange={(e) => setNet("deposit_networks", i, { binance_network: e.target.value.toUpperCase() })} />
             <button className="btn sec sm" style={{ marginTop: 10 }} onClick={() => set("deposit_networks", s.deposit_networks.filter((_: any, j: number) => j !== i))}><Icon name="trash" size={14} /> Remove</button>
           </div>
         ))}
         <button className="btn sec sm" style={{ marginTop: 12 }} onClick={() => set("deposit_networks", [...s.deposit_networks, { name: "", address: "", min: 5, note: "" }])}><Icon name="plus" size={14} /> Add network</button>
       </div>
+
+      <BinanceCard s={s} set={set} call={call} />
 
       <div className="card">
         <div className="row"><div><div className="title">USDT withdrawals</div><div className="sub">You send payouts manually. No wallet keys are ever stored in the app.</div></div><Toggle on={s.payout_enabled} onChange={(v) => set("payout_enabled", v)} /></div>
@@ -978,7 +1023,7 @@ function RewardsPage({ call }: { call: Call }) {
   if (!s) return <div className="empty">Loading…</div>;
   const set = (k: string, v: any) => setS({ ...s, [k]: v });
   const save = async () => {
-    const keys = ["daily_enabled", "daily_rewards", "referral_enabled", "referrer_bonus", "invitee_bonus", "referral_max", "referral_link", "mine_cap_hours"];
+    const keys = ["daily_enabled", "daily_rewards", "referral_enabled", "referrer_bonus", "invitee_bonus", "referral_max", "referral_commission_pct", "referral_link", "mine_cap_hours"];
     const body: any = {};
     keys.forEach((k) => (body[k] = s[k]));
     const d: any = await call({ action: "saveSettings", settings: body }, "Saved");
@@ -1014,6 +1059,7 @@ function RewardsPage({ call }: { call: Call }) {
         <div className="grid3">
           <div><label>Referrer bonus (coins)</label><input inputMode="numeric" value={s.referrer_bonus} onChange={(e) => set("referrer_bonus", e.target.value)} /><Hint coins={s.referrer_bonus} /></div>
           <div><label>Friend bonus (coins)</label><input inputMode="numeric" value={s.invitee_bonus} onChange={(e) => set("invitee_bonus", e.target.value)} /><Hint coins={s.invitee_bonus} /></div>
+          <div><label>Lifetime commission on friends' earnings (%)</label><input inputMode="decimal" value={s.referral_commission_pct} onChange={(e) => set("referral_commission_pct", e.target.value)} /></div>
           <div><label>Max rewarded friends / user</label><input inputMode="numeric" value={s.referral_max} onChange={(e) => set("referral_max", e.target.value)} /></div>
         </div>
         <label>Mini App link (https://t.me/yourbot/appname)</label>

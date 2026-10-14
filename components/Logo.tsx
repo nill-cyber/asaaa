@@ -1,11 +1,19 @@
 import React, { useId, useState } from "react";
-import { LOGO_SOURCES } from "@/lib/brand";
+import { LOGO_SOURCES, USDT_SOURCES } from "@/lib/brand";
 
 /** লোগো: public/logo.png → iili.io (পূর্ণ) → iili.io (thumbnail) → নিজস্ব SVG কয়েন */
-export default function Logo({ size = 32, className = "", style }: { size?: number; className?: string; style?: React.CSSProperties }) {
+export default function Logo({ size = 32, className = "", style, kind = "tfuel" }: { size?: number; className?: string; style?: React.CSSProperties; kind?: "tfuel" | "usdt" }) {
   const [i, setI] = useState(0);
+  const sources = kind === "usdt" ? USDT_SOURCES : LOGO_SOURCES;
   const gid = "lg" + useId().replace(/[^a-zA-Z0-9]/g, "");
-  if (i >= LOGO_SOURCES.length) {
+  if (i >= sources.length) {
+    if (kind === "usdt")
+      return (
+        <svg width={size} height={size} viewBox="0 0 48 48" className={className} style={style} aria-hidden>
+          <circle cx="24" cy="24" r="22" fill="#26A17B" />
+          <path d="M14 16h20M24 16v18M17 22c0 2 3 3 7 3s7-1 7-3" stroke="#fff" strokeWidth="3" strokeLinecap="round" fill="none" />
+        </svg>
+      );
     return (
       <svg width={size} height={size} viewBox="0 0 48 48" className={className} style={style} aria-hidden>
         <defs>
@@ -23,7 +31,7 @@ export default function Logo({ size = 32, className = "", style }: { size?: numb
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={LOGO_SOURCES[i]}
+      src={sources[i]}
       alt=""
       width={size}
       height={size}

@@ -13,6 +13,8 @@ import { payWeek, top, names } from "@/lib/leaderboard";
 import { weekIndex } from "@/lib/wallet";
 import { processTriggers } from "@/lib/triggers";
 import { getPrice, fromU, toU } from "@/lib/market";
+import { settleDeposit, recheckAuto } from "@/lib/deposits";
+import { checkKey, clearCreds, credHint, getCreds, saveCreds } from "@/lib/binance";
 
 const idRe = /^[\w-]{1,64}$/;
 
@@ -45,12 +47,16 @@ function parseSite(b: any): ArticleSite {
   if (new Set(norms).size !== norms.length) throw new HttpError(400, "The same URL can't be used twice");
   const name = String(b.name || "").replace(/[\u0000-\u001f]/g, "").trim().slice(0, 60);
   if (!name) throw new HttpError(400, "Enter a site name");
+  const dwell = posInt(b.dwell_seconds ?? 15, "dwell_seconds", 300, 5);
+  const lock = posInt(b.lock_seconds ?? 5, "lock_seconds", 60, 0);
+  if (lock >= dwell) throw new HttpError(400, "Top-read seconds must be less than seconds per article");
   return {
     name,
     urls,
     reward: posInt(b.reward, "reward", 1e7, 1),
     cooldown_minutes: posInt(b.cooldown_minutes, "cooldown_minutes", 60 * 24 * 30),
-    dwell_seconds: posInt(b.dwell_seconds ?? 15, "dwell_seconds", 300, 5),
+    dwell_seconds: dwell,
+    lock_seconds: lock,
     is_active: b.is_active !== false,
   };
 }
@@ -351,45 +357,51 @@ export default route(async (req, res) => {
       const id = String(b.id || "");
       if (!idRe.test(id)) throw new HttpError(400, "Invalid id");
       const approve = action === "approveDeposit";
-      const note = clean(b.note, 200);
       let credit = 0;
       if (approve) {
         credit = Number(b.amount);
         if (!Number.isFinite(credit) || credit <= 0 || credit > 1e6) throw new HttpError(400, "Enter the amount actually received");
       }
-      let rec: any = null;
-      await db()
-        .ref(`deposits/${id}`)
-        .transaction((d: any) => {
-          rec = null;
-          if (d === null) return d;
-          if (d.status !== "pending") return;
-          d.status = approve ? "approved" : "rejected";
-          d.handled_at = Date.now();
-          d.note = note;
-          if (approve) d.credited = credit;
-          rec = { ...d };
-          return d;
-        });
-      if (!rec) throw new HttpError(409, "not_pending");
-      const upd: Record<string, any> = {
-        [`users/${rec.uid}/deposits/${id}/status`]: rec.status,
-        [`users/${rec.uid}/deposits/${id}/note`]: note || null,
-      };
-      if (approve) {
-        upd[`users/${rec.uid}/usdt_u`] = ServerValue.increment(toU(credit));
-        upd[`users/${rec.uid}/deposits/${id}/credited`] = credit;
-        upd[`users/${rec.uid}/usdt_tot/deposited`] = ServerValue.increment(toU(credit));
-      } else {
-        upd[`deposit_txids/${rec.txkey}`] = null; // বাতিল হলে txid আবার জমা দেওয়া যাবে
-      }
-      await db().ref().update(upd);
-      await activity(rec.uid, approve ? "deposit" : "deposit_rejected", { usdt_u: approve ? toU(credit) : toU(Number(rec.amount) || 0), note });
-      await notify(rec.uid, approve ? `✅ Deposit approved: +${credit} USDT added to your wallet.` : `❌ Deposit rejected.${note ? " Reason: " + note : ""}`);
-      await adminLog(who, approve ? "deposit_approved" : "deposit_rejected", { id, uid: rec.uid, claimed: rec.amount, credited: approve ? credit : 0, note });
+      await settleDeposit(id, approve, credit, clean(b.note, 200), who);
       liab = null;
       return void res.json({ success: true });
     }
+
+    /* ---- Binance (read-only key) ---- */
+    case "binanceStatus": {
+      const st = await getSettings(true);
+      return void res.json({ success: true, key: await credHint(), auto: st.binance_auto, max: st.binance_auto_max, last: (await db().ref("stats/binance_check").get()).val() });
+    }
+    case "binanceSave": {
+      const key = clean(b.key, 128), secret = clean(b.secret, 128);
+      if (key.length < 20 || secret.length < 20) throw new HttpError(400, "Paste both the API key and the secret");
+      const chk = await checkKey({ key, secret, src: "db" }).catch((e: any) => { throw new HttpError(400, e?.message || "Binance rejected this key"); });
+      if (!chk.ok) throw new HttpError(400, "Key rejected: " + chk.problems.join("; ") + ". Create a key with ONLY “Enable Reading”.");
+      await saveCreds(key, secret);
+      await db().ref("stats/binance_check").set({ at: Date.now(), ok: true, msg: "Key saved and verified (read-only)" });
+      await adminLog(who, "binance_key_saved", {});
+      return void res.json({ success: true });
+    }
+    case "binanceTest": {
+      const c = await getCreds();
+      if (!c) throw new HttpError(400, "No Binance key saved");
+      let out: any;
+      try {
+        const chk = await checkKey(c);
+        out = { at: Date.now(), ok: chk.ok, msg: chk.ok ? "Connected — key is read-only" : "Unsafe key: " + chk.problems.join("; ") };
+      } catch (e: any) {
+        out = { at: Date.now(), ok: false, msg: e?.message || "Check failed" };
+      }
+      await db().ref("stats/binance_check").set(out);
+      return void res.json({ success: true, result: out });
+    }
+    case "binanceClear": {
+      await clearCreds();
+      await adminLog(who, "binance_key_removed", {});
+      return void res.json({ success: true });
+    }
+    case "binanceRecheck":
+      return void res.json({ success: true, ...(await recheckAuto()) });
 
     case "payUsdt":
     case "rejectUsdt": {

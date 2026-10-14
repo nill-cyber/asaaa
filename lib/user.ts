@@ -19,6 +19,9 @@ export interface Boost {
   en: number; // বাড়তি max energy
   regen: number; // বাড়তি energy/sec
   mph: number; // auto-mining unit/ঘণ্টা
+  starts_at?: number; // পরে শুরু হলে (downgrade)
+  price?: number; // প্ল্যানের পূর্ণ দাম (র‍্যাঙ্কের জন্য)
+  paid?: number; // আসলে যত দিয়েছে (upgrade-এ কম)
 }
 export interface Stake {
   plan_id: string;
@@ -30,7 +33,39 @@ export interface Stake {
   status: "active" | "claimed";
 }
 
-export const boostActive = (b: Boost, now = Date.now()) => b.expires_at === 0 || b.expires_at > now;
+export const boostActive = (b: Boost, now = Date.now()) => (b.starts_at || 0) <= now && (b.expires_at === 0 || b.expires_at > now);
+export const boostQueued = (b: Boost, now = Date.now()) => (b.starts_at || 0) > now;
+
+export type BoostKind = "buy" | "upgrade" | "downgrade" | "current" | "queued" | "blocked";
+export interface BoostQuote { kind: BoostKind; cost: number; startsAt: number; activeIds: string[]; queuedIds: string[]; queuedRefund: number }
+
+/**
+ * একসাথে একটাই boost। বেশি দামি = upgrade (বর্তমানটার বাকি মেয়াদের আনুপাতিক মূল্য কেটে যায়, এখনই শুরু)।
+ * কম দামি = downgrade (পুরো দাম দিয়ে, বর্তমানটা শেষ হলে শুরু; আগে থেকে queue থাকলে বা বর্তমানটা স্থায়ী হলে নয়)।
+ */
+export function quoteBoost(boosts: Record<string, Boost> | undefined, plan: { id: string; price: number; duration_days: number }, now = Date.now()): BoostQuote {
+  const all = Object.entries(boosts || {});
+  const active = all.filter(([, b]) => boostActive(b, now));
+  const queued = all.filter(([, b]) => boostQueued(b, now) && (b.expires_at === 0 || b.expires_at > now));
+  const q: BoostQuote = { kind: "buy", cost: plan.price, startsAt: now, activeIds: active.map(([i]) => i), queuedIds: queued.map(([i]) => i), queuedRefund: 0 };
+  if (active.some(([i]) => i === plan.id)) return { ...q, kind: "current", cost: 0 };
+  if (queued.some(([i]) => i === plan.id)) return { ...q, kind: "queued", cost: 0, startsAt: queued.find(([i]) => i === plan.id)![1].starts_at || now };
+  if (!active.length) return q;
+  const top = Math.max(...active.map(([, b]) => b.price ?? b.paid ?? 0));
+  if (plan.price > top) {
+    let credit = 0;
+    for (const [, b] of active) {
+      const paid = b.paid ?? b.price ?? 0;
+      if (b.expires_at === 0) continue; // স্থায়ী প্ল্যানের আনুপাতিক মান নেই
+      const from = b.starts_at || b.bought_at;
+      const total = Math.max(1, b.expires_at - from);
+      credit += Math.floor((paid * Math.max(0, b.expires_at - now)) / total);
+    }
+    return { ...q, kind: "upgrade", cost: Math.max(0, plan.price - credit), queuedRefund: queued.reduce((a, [, b]) => a + (b.paid ?? b.price ?? 0), 0) };
+  }
+  if (queued.length || active.some(([, b]) => b.expires_at === 0)) return { ...q, kind: "blocked", cost: 0 };
+  return { ...q, kind: "downgrade", startsAt: Math.max(...active.map(([, b]) => b.expires_at)) };
+}
 
 /** জমে থাকা auto-mining (সর্বোচ্চ capHours ঘণ্টা); cur.balance-এ যোগ করে, mine_at = now */
 export function settleMining(cur: UserRecord, capHours: number, now = Date.now()): number {
@@ -38,7 +73,7 @@ export function settleMining(cur: UserRecord, capHours: number, now = Date.now()
   const from = Math.max(cur.mine_at || 0, now - capHours * 3600000);
   for (const b of Object.values(cur.boosts || {})) {
     if (!b.mph) continue;
-    const start = Math.max(from, b.bought_at);
+    const start = Math.max(from, b.starts_at || b.bought_at);
     const end = b.expires_at === 0 ? now : Math.min(now, b.expires_at);
     if (end > start) total += (b.mph * (end - start)) / 3600000;
   }
@@ -75,6 +110,8 @@ export interface UserRecord {
   ref_paid?: boolean;
   ref_count?: number;
   ref_earned?: number;
+  ref_comm?: number; // এর মধ্যে কমিশন
+  ref_comm_at?: number;
   banned?: boolean;
   ban_reason?: string;
   balance: number;
@@ -232,5 +269,51 @@ export async function qualifyReferral(uid: string) {
       .set({ name: u.name || "User", at: Date.now(), bonus: paid });
   } catch (e) {
     console.error("qualifyReferral failed", e);
+  }
+}
+
+/** রেফারি-র "আয়" যা থেকে কমিশন হয়: tap, article, task, daily, mining, spin, ads। (stake, trade/কেনা, admin credit, promo, prize, referral নয়) */
+const COMM_KEYS = ["tap", "articles", "tasks", "daily", "mining", "spin", "ads"] as const;
+export const commissionBase = (earn?: Record<string, number>) => COMM_KEYS.reduce((a, k) => a + (Number(earn?.[k]) || 0), 0);
+
+/**
+ * রেফারার তার রেফারিদের আয়ের s.referral_commission_pct% পায় (রেফারির ব্যালেন্স কমে না)।
+ * প্রতি রেফারির "আগে যা দেওয়া হয়েছে" একটা transaction-এ বাড়ানো হয় — দুই জায়গা থেকে একসাথে চললেও দুইবার পায় না।
+ */
+export async function settleCommission(refId: string, force = false): Promise<number> {
+  try {
+    const s = await getSettings();
+    if (!s.referral_enabled || !(s.referral_commission_pct > 0)) return 0;
+    const now = Date.now();
+    const me = (await db().ref(`users/${refId}`).get()).val() as UserRecord | null;
+    if (!me || me.banned) return 0;
+    if (!force && now - (me.ref_comm_at || 0) < 10 * 60000) return 0;
+    const list = ((await db().ref(`referrals/${refId}`).get()).val() || {}) as Record<string, any>;
+    let total = 0;
+    for (const uid of Object.keys(list).slice(0, Math.max(0, s.referral_max))) {
+      const e = (await db().ref(`users/${uid}/earn`).get()).val() as Record<string, number> | null;
+      const target = Math.floor((commissionBase(e || undefined) * s.referral_commission_pct) / 100);
+      let prev = 0;
+      const r = await db().ref(`referrals/${refId}/${uid}/comm`).transaction((cur: number | null) => {
+        prev = cur || 0;
+        return target > prev ? target : undefined;
+      });
+      if (r.committed && target > prev) total += target - prev;
+    }
+    await db().ref(`users/${refId}/ref_comm_at`).set(now);
+    if (total <= 0) return 0;
+    await db().ref(`users/${refId}`).transaction((cur: UserRecord | null) => {
+      if (cur === null) return cur;
+      cur.balance += total;
+      earn(cur, "referral", total);
+      cur.ref_earned = (cur.ref_earned || 0) + total;
+      cur.ref_comm = (cur.ref_comm || 0) + total;
+      return cur;
+    });
+    await activity(refId, "referral", { coins: total, note: `${s.referral_commission_pct}% friends' earnings` });
+    return total;
+  } catch (e) {
+    console.error("settleCommission failed", e);
+    return 0;
   }
 }
