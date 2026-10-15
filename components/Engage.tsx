@@ -25,11 +25,14 @@ export function useEngage() {
 type AdCfg = Engage["ads"] | undefined;
 
 /** Monetag SDK একবারই যোগ হয়: window.show_<zone> */
-function loadMonetag(zone: string) {
-  if (typeof document === "undefined" || !zone || document.getElementById("monetag-sdk-" + zone)) return;
+function loadMonetag(zone: string, force = false) {
+  if (typeof document === "undefined" || !zone) return;
+  const old = document.getElementById("monetag-sdk-" + zone);
+  if (old && !force) return;
+  old?.remove();
   const s = document.createElement("script");
   s.id = "monetag-sdk-" + zone;
-  s.src = "//libtl.com/sdk.js";
+  s.src = "https://libtl.com/sdk.js";
   s.async = true;
   s.setAttribute("data-zone", zone);
   s.setAttribute("data-sdk", "show_" + zone);
@@ -56,9 +59,15 @@ export function useAd(ads: AdCfg, say: Say) {
     try {
       const { nonce } = await api<{ nonce: string }>("ad-start", { purpose });
       if (monetag) {
-        const show = (window as any)["show_" + monetag];
+        // SDK ধীরে লোড হলে কিছুক্ষণ অপেক্ষা; না এলে একবার আবার লোড চেষ্টা
+        const get = () => (window as any)["show_" + monetag];
+        for (let i = 0; i < 16 && typeof get() !== "function"; i++) {
+          if (i === 6) loadMonetag(monetag, true);
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        const show = get();
         if (typeof show !== "function") {
-          say("Ads aren't ready yet. Please try again in a moment.");
+          say("The ad service couldn't be reached. Turn off any ad blocker / VPN and try again.");
           return null;
         }
         try {
@@ -100,7 +109,7 @@ export function useAd(ads: AdCfg, say: Say) {
 /** Monetag in-app interstitial: admin চালু করলে অ্যাপ খোলার সময় একবার চালু হয় (নিজে নিজে মাঝেমধ্যে দেখায়) */
 export function InAppAds() {
   const { e } = useEngage();
-  const zone = e?.ads.inapp || "";
+  const zone = e?.ads?.inapp || "";
   useEffect(() => {
     if (!zone) return;
     loadMonetag(zone);

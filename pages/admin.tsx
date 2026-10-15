@@ -386,6 +386,7 @@ function UserModal({ uid, call, onClose }: { uid: string; call: Call; onClose: (
         <button className="btn good sm" disabled={!delta || reason.length < 3} onClick={() => adjust(1)}><Icon name="plus" size={15} /> Add</button>
         <button className="btn danger sm" disabled={!delta || reason.length < 3} onClick={() => adjust(-1)}>Deduct</button>
         <span style={{ flex: 1 }} />
+        <button className="btn sec sm" onClick={async () => { if (confirm("Remove this user's withdraw PIN?")) await call({ action: "resetPin", uid }, "PIN reset"); }}><Icon name="lock" size={15} /> Reset PIN</button>
         <button className={`btn sm ${u.banned ? "sec" : "danger"}`} onClick={ban}><Icon name="ban" size={15} /> {u.banned ? "Unban" : "Ban user"}</button>
       </div>
 

@@ -39,6 +39,7 @@ const P: Record<string, string> = {
   bolt: "M13 2L3 14h9l-1 8 10-12h-9l1-8z",
   article: "M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2M18 14h-8M15 18h-5M10 6h8v4h-8z",
   trend: "M23 6l-9.5 9.5-5-5L1 18M17 6h6v6",
+  bell: "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0",
 };
 
 export type IconName = keyof typeof P;

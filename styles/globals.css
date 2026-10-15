@@ -216,3 +216,34 @@ pre, code.blk { background: #0e1626; color: #dfe6f5; padding: 12px; border-radiu
 .acc.open .acc-c { transform: rotate(-90deg); }
 .acc-b { padding: 6px 16px 16px; }
 .acc-b .card { box-shadow: none; border: 0; padding: 4px 0; background: transparent; margin-bottom: 8px; }
+
+/* ---------- Dark theme (Profile → Settings) ---------- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0c111b; --card: #151c2a; --line: #26304280; --text: #e8edf7; --muted: #94a0b8; --soft: #1c2536;
+  --ok-bg: #11301f; --warn-bg: #3a2c0c; --err-bg: #3a1618; --info-bg: #14264a;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 4px 16px rgba(0, 0, 0, .25);
+}
+:root[data-theme="dark"] input, :root[data-theme="dark"] select, :root[data-theme="dark"] textarea { background: var(--soft); border-color: #2d3850; }
+:root[data-theme="dark"] .hero, :root[data-theme="dark"] .balance-card { background: linear-gradient(135deg, #1b2335 0%, #2a2210 100%); border-color: #4a3a14; }
+:root[data-theme="dark"] .stat { background: rgba(255, 255, 255, .05); }
+:root[data-theme="dark"] .nav { background: rgba(16, 22, 34, .94); }
+:root[data-theme="dark"] .nav button.on, :root[data-theme="dark"] .ico.gold, :root[data-theme="dark"] .reward, :root[data-theme="dark"] .avatar, :root[data-theme="dark"] .day.now, :root[data-theme="dark"] .side .item.on { background: rgba(245, 158, 11, .18); color: #ffd27a; }
+:root[data-theme="dark"] .btn.sec, :root[data-theme="dark"] .seg button.on, :root[data-theme="dark"] .modal, :root[data-theme="dark"] .side, :root[data-theme="dark"] .kpi, :root[data-theme="dark"] .login .box, :root[data-theme="dark"] .mtop { background: var(--card); }
+:root[data-theme="dark"] .acc.open { border-color: #4a3a14; }
+:root[data-theme="dark"] .acc.open .acc-h { background: linear-gradient(90deg, #2a2210, #1f2434); }
+:root[data-theme="dark"] .acc-i { color: #ffd27a; }
+:root[data-theme="dark"] .banner.info, :root[data-theme="dark"] .notice.info { color: #a9c3ff; }
+:root[data-theme="dark"] .banner.warn, :root[data-theme="dark"] .notice.warn { color: #f1cf8b; }
+:root[data-theme="dark"] .banner.success, :root[data-theme="dark"] .notice.success { color: #8fe0ad; }
+:root[data-theme="dark"] .banner.err, :root[data-theme="dark"] .notice.err { color: #ffb3b6; }
+:root[data-theme="dark"] .tbl tr.click:hover { background: #1b2436; }
+:root[data-theme="dark"] .switch { background: #3a465f; }
+:root[data-theme="dark"] svg text { fill: #94a0b8; }
+:root[data-theme="dark"] svg line[stroke="#e7ebf3"] { stroke: #263042; }
+
+/* ---------- Notifications bell, bottom sheet ---------- */
+.bell { position: relative; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--card); border: 1px solid var(--line); color: var(--text); }
+.bell .badge { position: absolute; top: -3px; right: -3px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--err); color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center; }
+.sheet-bg { position: fixed; inset: 0; z-index: 90; background: rgba(10, 16, 30, 0.5); display: flex; align-items: flex-end; justify-content: center; }
+.sheet { width: 100%; max-width: 480px; max-height: 80vh; overflow-y: auto; background: var(--card); color: var(--text); border-radius: 22px 22px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); box-shadow: var(--shadow); }

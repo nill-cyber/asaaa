@@ -5,6 +5,7 @@ import { ServerValue } from "firebase-admin/database";
 import { sortableId } from "@/lib/crypto";
 import { spend } from "@/lib/wallet";
 import { ensureUser, newUser, UserRecord, MAX_AUTH_AGE_MONEY } from "@/lib/user";
+import { checkPin } from "@/lib/prefs";
 
 /** Withdraw অনুরোধ: coin আগে কেটে নেওয়া হয়, admin টাকা পাঠালে paid / বাতিল করলে ফেরত */
 export default route(async (req, res) => {
@@ -13,6 +14,7 @@ export default route(async (req, res) => {
 
   const { u: rec, settings } = await ensureUser(user);
   if (!settings.withdraw_enabled) throw new HttpError(403, "withdraw_disabled");
+  await checkPin(user.id, req.body?.pin);
 
   const amount = Math.floor(Number(req.body?.amount));
   const method = String(req.body?.method || "");

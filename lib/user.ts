@@ -110,6 +110,7 @@ export interface UserRecord {
   ref_paid?: boolean;
   ref_count?: number;
   ref_earned?: number;
+  onboarded?: boolean;
   ref_comm?: number; // এর মধ্যে কমিশন
   ref_comm_at?: number;
   banned?: boolean;

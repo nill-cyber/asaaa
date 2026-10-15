@@ -6,6 +6,7 @@ import { sortableId } from "@/lib/crypto";
 import { ensureUser, newUser, MAX_AUTH_AGE_MONEY, UserRecord } from "@/lib/user";
 import { toU, U } from "@/lib/market";
 import { usdtTot, activity } from "@/lib/wallet";
+import { checkPin } from "@/lib/prefs";
 
 /** USDT withdraw: ব্যালেন্স আগে কাটা, admin হাতে পাঠিয়ে paid করে / বাতিলে ফেরত */
 export default route(async (req, res) => {
@@ -13,6 +14,7 @@ export default route(async (req, res) => {
   await rateLimit(user.id, "usdt-withdraw", 6);
   const { u: rec, settings: s } = await ensureUser(user);
   if (!s.payout_enabled) throw new HttpError(403, "withdraw_disabled");
+  await checkPin(user.id, req.body?.pin);
 
   const net = s.payout_networks.find((n) => n.id === String(req.body?.network || ""));
   if (!net) throw new HttpError(400, "bad_network");

@@ -87,6 +87,7 @@ export default route(async (req, res) => {
     refillAt = at + settings.empty_refill_hours * 3600000;
   }
   const price = await peekPrice(settings);
+  const unread = Number((await db().ref(`inbox_meta/${user.id}/unread`).get()).val()) || 0;
   res.json({
     success: true,
     user: {
@@ -107,6 +108,8 @@ export default route(async (req, res) => {
     withdrawals,
     announcement,
     price,
+    unread,
+    showIntro: !u.onboarded && !!u.created_at && now - u.created_at < 3 * 86400000,
     dailyReady: settings.daily_enabled && u.daily?.day !== dayKey(now),
     cfg,
   });

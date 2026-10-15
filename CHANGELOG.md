@@ -1,4 +1,6 @@
 # Changelog
+- v13: Notification bell + in-app inbox, first-time onboarding. Fixes: balance no longer repeated on TFUEL/Profile pages, double "$$" removed, chart periods 7D / 1M / 3M / 1Y added, Deposit & Withdraw now live only in Profile (TFUEL tab = Trade / Orders / Trade history), leaderboard falls back to a safe query and reports the real error, Monetag SDK waits/retries before saying "not ready".
+- v12: Settings hub (Profile → Settings): Light / Dark / Auto theme, optional Withdraw PIN (4–6 digits, 5 wrong tries = 15-minute lock, asked on TFUEL and USDT withdrawals), saved withdrawal addresses (up to 10) that fill the withdraw forms.
 - v11: Article pages now have a timed reading flow: scrolling is locked for the first seconds (default 5s, read the top), then the reader can scroll for the rest (default 10s of the 15s). Set per site in Admin → Article sites ("Top-read lock").
 - v10: One boost at a time (upgrade now with prorated credit, downgrade starts when the current plan ends). Monetag rewarded ads (interstitial / popup) + optional in-app interstitial, selectable in Admin → Engagement. "Copy code" button next to the article code.
 - v9: Lifetime referral commission (default 3%, admin-editable) on friends' earnings from tapping, articles, tasks, daily, mining, spin and ads — not staking/trading/admin credits. USDT logo used across the app.

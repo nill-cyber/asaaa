@@ -8,7 +8,13 @@ export type Top = { id: string; v: number }[];
 
 /** সর্বোচ্চ n জন (বড় থেকে ছোট) */
 export async function top(board: string, n = 50): Promise<Top> {
-  const v = ((await db().ref(`lb/${board}`).orderByValue().limitToLast(n).get()).val() || {}) as Record<string, number>;
+  let v: Record<string, number>;
+  try {
+    v = ((await db().ref(`lb/${board}`).orderByValue().limitToLast(n).get()).val() || {}) as Record<string, number>;
+  } catch (e) {
+    console.error("leaderboard query failed, reading whole board", e);
+    v = ((await db().ref(`lb/${board}`).get()).val() || {}) as Record<string, number>; // index/query সমস্যায় সরাসরি পড়ে JS-এ সাজাই
+  }
   return Object.entries(v)
     .map(([id, x]) => ({ id, v: Number(x) || 0 }))
     .sort((a, b) => b.v - a.v);

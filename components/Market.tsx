@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { api, errText, fmtTf, fmtUsd } from "@/lib/client";
 import Icon from "@/components/Icons";
 import Logo from "@/components/Logo";
+import { useAccount, PinField, AddrPicker } from "@/components/Settings";
 
 type Say = (t: string, ok?: boolean) => void;
 type Candle = [number, number, number, number, number];
@@ -32,7 +33,8 @@ const store = (k: string, v?: string) => {
 };
 
 /* ---------------- Live chart: line / candle, zoom + pan like trading sites ---------------- */
-const RANGE_LABEL = { "1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1D" } as const;
+const RANGE_LABEL = { "1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1D", "7d": "7D", "30d": "1M", "90d": "3M", "1y": "1Y" } as const;
+const LONG = ["7d", "30d", "90d", "1y"];
 type RangeKey = keyof typeof RANGE_LABEL;
 const MIN_SPAN = 8;
 
@@ -53,11 +55,11 @@ function PriceChart({ live, onChange }: { live: number; onChange: (c: number) =>
     setWin(null);
     let dead = false;
     const go = () =>
-      api<any>("market-chart", { interval: range })
+      api<any>("market-chart", LONG.includes(range) ? { range } : { interval: range })
         .then((d) => !dead && setData({ pts: d.pts || [], candles: d.candles || [] }))
         .catch(() => {});
     go();
-    const iv = setInterval(go, range === "1m" ? 20000 : 60000);
+    const iv = setInterval(go, range === "1m" ? 20000 : LONG.includes(range) ? 300000 : 60000);
     return () => {
       dead = true;
       clearInterval(iv);
@@ -294,11 +296,11 @@ function PriceChart({ live, onChange }: { live: number; onChange: (c: number) =>
   );
 }
 
-type Sub = "trade" | "orders" | "deposit" | "withdraw" | "history";
+type Sub = "trade" | "orders" | "history";
 export default function Market({ say, reload, cpt, startSub }: { say: Say; reload: () => void; cpt: number; startSub?: string }) {
   const [m, setM] = useState<M | null>(null);
   const [change, setChange] = useState(0);
-  const [sub, setSub] = useState<Sub>((["trade", "orders", "deposit", "withdraw", "history"].includes(startSub || "") ? startSub : "trade") as Sub);
+  const [sub, setSub] = useState<Sub>((["trade", "orders", "history"].includes(startSub || "") ? startSub : "trade") as Sub);
 
   const load = useCallback(async () => {
     try {
@@ -327,7 +329,7 @@ export default function Market({ say, reload, cpt, startSub }: { say: Say; reloa
       <div className="balance-card" style={{ marginTop: 0, marginBottom: 12 }}>
         <div className="lbl">Total balance</div>
         <div className="amt num"><Logo size={32} />{fmtTf(m.balances.coins, cpt)}<span className="unit">TFUEL</span></div>
-        <div className="eq num">≈ ${fmtUsd((m.balances.coins / cpt) * price + m.balances.usdt)} USDT</div>
+        <div className="eq num">≈ {fmtUsd((m.balances.coins / cpt) * price + m.balances.usdt)} USDT</div>
       </div>
       <div className="card" style={{ paddingBottom: 8 }}>
         <div className="row">
@@ -360,15 +362,13 @@ export default function Market({ say, reload, cpt, startSub }: { say: Say; reloa
       </div>
 
       <div className="seg">
-        {(["trade", "orders", "deposit", "withdraw", "history"] as const).map((k) => (
-          <button key={k} className={sub === k ? "on" : ""} style={{ padding: "8px 4px" }} onClick={() => setSub(k)}>{k === "withdraw" ? "Payout" : cap(k)}</button>
+        {(["trade", "orders", "history"] as const).map((k) => (
+          <button key={k} className={sub === k ? "on" : ""} style={{ padding: "8px 4px" }} onClick={() => setSub(k)}>{k === "history" ? "Trade history" : cap(k)}</button>
         ))}
       </div>
 
       {sub === "trade" && <Trade m={m} cpt={cpt} say={say} done={done} />}
       {sub === "orders" && <Orders m={m} cpt={cpt} say={say} done={done} />}
-      {sub === "deposit" && <Deposit m={m} say={say} done={done} />}
-      {sub === "withdraw" && <Payout m={m} say={say} done={done} />}
       {sub === "history" && <History m={m} cpt={cpt} say={say} done={done} />}
     </>
   );
@@ -519,6 +519,8 @@ function Payout({ m, say, done }: { m: M; say: Say; done: () => void }) {
   const [id, setId] = useState(m.payout.networks[0]?.id || "");
   const [addr, setAddr] = useState("");
   const [amt, setAmt] = useState("");
+  const [pin, setPin] = useState("");
+  const { a: acct } = useAccount();
   const [busy, setBusy] = useState(false);
   const net = m.payout.networks.find((n) => n.id === id);
   if (!m.payout.enabled || !m.payout.networks.length)
@@ -527,9 +529,10 @@ function Payout({ m, say, done }: { m: M; say: Say; done: () => void }) {
   const submit = async () => {
     setBusy(true);
     try {
-      const r = await api<any>("usdt-withdraw", { network: id, address: addr, amount: n });
+      const r = await api<any>("usdt-withdraw", { network: id, address: addr, amount: n, pin });
       say(`Request sent. You'll receive ${usd(r.receive, 2)} USDT.`, true);
       setAmt("");
+      setPin("");
       done();
     } catch (e: any) {
       let t = errText(e);
@@ -546,7 +549,9 @@ function Payout({ m, say, done }: { m: M; say: Say; done: () => void }) {
         {m.payout.networks.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
       </select>
       <label>Wallet address</label>
+      <AddrPicker acc={acct} onPick={setAddr} />
       <input placeholder="Your USDT address" value={addr} maxLength={100} onChange={(e) => setAddr(e.target.value)} />
+      <PinField acc={acct} value={pin} onChange={setPin} />
       <label>Amount (USDT)</label>
       <div style={{ position: "relative" }}>
         <input inputMode="decimal" placeholder={net ? `Min ${usd(net.min, 2)}` : "0.00"} value={amt} onChange={(e) => setAmt(e.target.value.replace(/[^\d.]/g, ""))} />
@@ -772,4 +777,22 @@ function Orders({ m, cpt, say, done }: { m: M; cpt: number; say: Say; done: () =
       </div>
     </>
   );
+}
+
+/** Profile থেকে খোলে: Deposit / Withdraw (TFUEL ট্যাবে নয়) */
+function useMarket(say: Say) {
+  const [m, setM] = useState<M | null>(null);
+  const load = useCallback(async () => { try { setM(await api<M>("market")); } catch (e: any) { say(errText(e)); } }, [say]);
+  useEffect(() => { load(); }, [load]);
+  return { m, load };
+}
+export function DepositBox({ say, reload }: { say: Say; reload: () => void }) {
+  const { m, load } = useMarket(say);
+  if (!m) return <div className="card empty">Loading…</div>;
+  return <Deposit m={m} say={say} done={() => { load(); reload(); }} />;
+}
+export function PayoutBox({ say, reload }: { say: Say; reload: () => void }) {
+  const { m, load } = useMarket(say);
+  if (!m) return <div className="card empty">Loading…</div>;
+  return <Payout m={m} say={say} done={() => { load(); reload(); }} />;
 }

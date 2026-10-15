@@ -338,6 +338,15 @@ export default route(async (req, res) => {
       return void res.json({ success: true });
     }
 
+    case "resetPin": {
+      const uid = String(b.uid || "");
+      if (!/^\d{1,20}$/.test(uid)) throw new HttpError(400, "Invalid user id");
+      await db().ref(`user_prefs/${uid}/pin`).remove();
+      await adminLog(who, "reset_pin", { uid });
+      await notify(uid, "🔐 Your withdraw PIN was reset by support. You can set a new one in Profile → Settings.");
+      return void res.json({ success: true });
+    }
+
     case "marketStatus": {
       const st = await getSettings(true);
       const p = await getPrice(st, true);

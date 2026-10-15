@@ -4,6 +4,9 @@ import { BRAND } from "@/lib/brand";
 import Logo from "@/components/Logo";
 import Icon from "@/components/Icons";
 import Market from "@/components/Market";
+import { DepositBox, PayoutBox } from "@/components/Market";
+import { Bell, Onboarding } from "@/components/Inbox";
+import { SettingsPanel, useAccount, PinField, AddrPicker } from "@/components/Settings";
 import { BoostTab, DailyCard } from "@/components/Growth";
 import { SpinCard, PromoCard, AdBonus, AdRefill, Leaderboard, InAppAds } from "@/components/Engage";
 
@@ -18,6 +21,8 @@ interface Me {
   withdrawals: { id: string; amount: number; method: string; status: string; created_at: number }[];
   announcement: { text: string; kind: "info" | "warn" | "success" } | null;
   price?: number | null;
+  unread?: number;
+  showIntro?: boolean;
   cfg: { minWithdraw: number; methods: string[]; coinsPerUnit: number; unitLabel: string; withdrawEnabled: boolean; coinsPerTfuel: number };
 }
 interface Task {
@@ -219,7 +224,10 @@ export default function Home() {
           <Logo size={28} />
           {BRAND}
         </div>
-        <div className="avatar">{(me.user.name || "U").slice(0, 1).toUpperCase()}</div>
+        <div className="gap">
+          <Bell unread={me.unread || 0} onRead={() => setMe((m) => (m ? { ...m, unread: 0 } : m))} />
+          <div className="avatar">{(me.user.name || "U").slice(0, 1).toUpperCase()}</div>
+        </div>
       </div>
 
       {me.announcement && (
@@ -229,6 +237,7 @@ export default function Home() {
         </div>
       )}
 
+      {tab !== "tfuel" && tab !== "profile" && (
       <div className="balance-card">
         <div className="lbl">Total balance</div>
         <div className="amt num">
@@ -238,6 +247,7 @@ export default function Home() {
         </div>
         <div className="eq num">≈ {fmtUsd((bal / cpt) * (me.price || 0))} USDT</div>
       </div>
+      )}
 
       {tab === "tap" && (
         <>
@@ -281,6 +291,7 @@ export default function Home() {
       {tab === "profile" && <Profile me={me} cpt={cpt} balance={bal} go={go} say={say} reload={load} />}
 
       <InAppAds />
+      {me.showIntro && <Onboarding onDone={() => setMe((m) => (m ? { ...m, showIntro: false } : m))} />}
       <div className="nav">
         <div className="nav-in">
           {items.map(([k, label, icon]) => (
@@ -536,6 +547,8 @@ function Profile({ me, cpt, balance, go, say, reload }: { me: Me; cpt: number; b
   const [method, setMethod] = useState("");
   const [account, setAccount] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pin, setPin] = useState("");
+  const { a: acct } = useAccount();
   const [msg, setMsg] = useState<{ t: string; ok: boolean } | null>(null);
   const { minWithdraw, methods, withdrawEnabled } = me.cfg;
   const T = (n: number) => fmtTf(n, cpt);
@@ -543,7 +556,8 @@ function Profile({ me, cpt, balance, go, say, reload }: { me: Me; cpt: number; b
   const submit = async () => {
     setBusy(true);
     try {
-      await api("withdraw", { amount: Math.round((Number(amount) || 0) * cpt), method, account });
+      await api("withdraw", { amount: Math.round((Number(amount) || 0) * cpt), method, account, pin });
+      setPin("");
       setMsg({ t: "Request sent. We'll review it and pay out soon.", ok: true });
       setAmount("");
       reload();
@@ -565,7 +579,7 @@ function Profile({ me, cpt, balance, go, say, reload }: { me: Me; cpt: number; b
         <span className="pill">ID {me.user.id}</span>
       </div>
 
-      <WalletView balance={balance} cpt={cpt} go={go}>
+      <WalletView balance={balance} cpt={cpt} go={go} say={say} reload={reload}>
         {methods.length > 0 && (
           <Acc icon="send" title="Other payout methods">
             <div className="sub">Minimum {T(minWithdraw)} TFUEL</div>
@@ -589,7 +603,9 @@ function Profile({ me, cpt, balance, go, say, reload }: { me: Me; cpt: number; b
                   ))}
                 </select>
                 <label>Account / wallet address</label>
+                <AddrPicker acc={acct} onPick={setAccount} />
                 <input placeholder="Enter your account or address" maxLength={100} value={account} onChange={(e) => setAccount(e.target.value)} />
+                <PinField acc={acct} value={pin} onChange={setPin} />
                 <div style={{ marginTop: 14 }}>
                   <button className="btn block" disabled={busy} onClick={submit}>Request withdrawal</button>
                 </div>
@@ -598,6 +614,9 @@ function Profile({ me, cpt, balance, go, say, reload }: { me: Me; cpt: number; b
             )}
           </Acc>
         )}
+        <Acc icon="settings" title="Settings">
+          <SettingsPanel say={say} />
+        </Acc>
         <Acc icon="wallet" title="Payout History">
           {me.withdrawals.length === 0 && <div className="small muted">No payout requests yet.</div>}
           {me.withdrawals.map((w) => (
@@ -655,7 +674,8 @@ interface Wallet {
 }
 
 /** Exchanger-style wallet: both balances, where they came from, recent activity */
-function WalletView({ balance, cpt, go, children }: { balance: number; cpt: number; go: (t: Tab, sub?: string) => void; children?: React.ReactNode }) {
+function WalletView({ balance, cpt, go, say, reload, children }: { balance: number; cpt: number; go: (t: Tab, sub?: string) => void; say: Say; reload: () => void; children?: React.ReactNode }) {
+  const [panel, setPanel] = useState<null | "deposit" | "withdraw">(null);
   const [w, setW] = useState<Wallet | null>(null);
   const [err, setErr] = useState(false);
   useEffect(() => {
@@ -682,19 +702,22 @@ function WalletView({ balance, cpt, go, children }: { balance: number; cpt: numb
       <div className="balance-card" style={{ marginTop: 0 }}>
         <div className="lbl">Total balance</div>
         <div className="amt num"><Logo size={32} />{T(tf)}<span className="unit">TFUEL</span></div>
-        <div className="eq num">≈ ${fmtUsd(tfUsd)} USDT{w.usdt.balance > 0 ? ` · + ${fmtUsd(w.usdt.balance)} USDT cash` : ""}</div>
+        <div className="eq num">≈ {fmtUsd(tfUsd)} USDT{w.usdt.balance > 0 ? ` · + ${fmtUsd(w.usdt.balance)} USDT cash` : ""}</div>
       </div>
 
       <div className="grid3b">
-        <button className="btn" onClick={() => go("tfuel", "deposit")}>Deposit</button>
-        <button className="btn sec" onClick={() => go("tfuel", "withdraw")}>Withdraw</button>
+        <button className={`btn ${panel === "deposit" ? "" : "sec"}`} onClick={() => setPanel(panel === "deposit" ? null : "deposit")}>Deposit</button>
+        <button className={`btn ${panel === "withdraw" ? "" : "sec"}`} onClick={() => setPanel(panel === "withdraw" ? null : "withdraw")}>Withdraw</button>
         <button className="btn sec" onClick={() => go("tfuel", "trade")}>Trade</button>
       </div>
+
+      {panel === "deposit" && <DepositBox say={say} reload={reload} />}
+      {panel === "withdraw" && <PayoutBox say={say} reload={reload} />}
 
       <div className="grid2" style={{ alignItems: "stretch" }}>
         <div className="balance-card" style={{ marginBottom: 0 }}>
           <div className="lbl">Total wallet value</div>
-          <div className="amt num" style={{ fontSize: 26, flexWrap: "wrap", gap: 4 }}>{total > 0 && total < 0.01 ? "<$0.01" : "$" + fmtUsd(total)}</div>
+          <div className="amt num" style={{ fontSize: 26, flexWrap: "wrap", gap: 4 }}>{fmtUsd(total)}</div>
           <div className="eq">USDT</div>
         </div>
         <div className="card" style={{ marginBottom: 0, padding: 14 }}>
