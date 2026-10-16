@@ -2,7 +2,7 @@ import { db } from "./firebase";
 import { ServerValue } from "firebase-admin/database";
 import { HttpError, TgUser } from "./auth";
 import { getSettings, Settings } from "./settings";
-import { dayKey } from "./log";
+import { dayKey, adminLog } from "./log";
 import { earn, activity, lbAdd } from "./wallet";
 
 export const MAX_BATCH_LIMIT = 50; // এক request-এ সর্বোচ্চ tap
@@ -111,6 +111,7 @@ export interface UserRecord {
   ref_count?: number;
   ref_earned?: number;
   onboarded?: boolean;
+  recovered?: number;
   ref_comm?: number; // এর মধ্যে কমিশন
   ref_comm_at?: number;
   banned?: boolean;
@@ -191,9 +192,17 @@ export async function ensureUser(
     let referred_by: string | undefined;
     const m = /^ref_(\d{1,20})$/.exec(user.start_param || "");
     if (m && m[1] !== user.id && settings.referral_enabled && (await db().ref(`users/${m[1]}/balance`).get()).val() !== null) referred_by = m[1];
-    const res = await ref.transaction((cur) =>
-      cur === null ? { ...newUser(now), name, username, created_at: now, last_seen: now, ...(referred_by ? { referred_by } : {}) } : undefined
-    );
+    // সুরক্ষা: আগে এই user-এর index থাকলে তার record হারিয়ে গেছে — নতুন বানিয়ে "০ ব্যালেন্স + intro" দেখানো নয়, শেষ snapshot থেকে ফেরত আনি
+    const idx = (await db().ref(`user_index/${user.id}`).get()).val() as { created_at?: number } | null;
+    const snap = idx ? ((await db().ref(`bal_snap/${user.id}`).get()).val() as { b?: number; u?: number; earn?: any; spent?: any; usdt_tot?: any } | null) : null;
+    const base: any = { ...newUser(now), name, username, created_at: idx?.created_at || now, last_seen: now, ...(referred_by && !idx ? { referred_by } : {}) };
+    if (idx) {
+      base.onboarded = true;
+      base.recovered = now;
+      if (snap) { base.balance = Math.max(0, Number(snap.b) || 0); base.usdt_u = Math.max(0, Number(snap.u) || 0); if (snap.earn) base.earn = snap.earn; if (snap.spent) base.spent = snap.spent; if (snap.usdt_tot) base.usdt_tot = snap.usdt_tot; }
+    }
+    const res = await ref.transaction((cur) => (cur === null ? base : undefined));
+    if (res.committed && idx) await adminLog("system", "user_record_missing", { uid: user.id, restored_balance: base.balance, from_snapshot: !!snap }).catch(() => {});
     if (res.committed) {
       await db()
         .ref()
@@ -204,6 +213,10 @@ export async function ensureUser(
         })
         .catch(() => {});
     }
+    u = (await ref.get()).val() as UserRecord;
+  } else if (typeof u.balance !== "number" || typeof u.energy !== "number") {
+    // অসম্পূর্ণ record (যেমন শুধু flag লেখা হয়ে গেছে) — আছে এমন কিছু না মুছে ডিফল্ট বসাই, নইলে ব্যালেন্স ০ দেখায়
+    await ref.transaction((cur: any) => (cur && (typeof cur.balance !== "number" || typeof cur.energy !== "number") ? { ...newUser(now), ...cur, balance: Number(cur.balance) || 0, created_at: cur.created_at || now, onboarded: true } : undefined));
     u = (await ref.get()).val() as UserRecord;
   } else if (opts.touch) {
     const upd: Record<string, any> = {};

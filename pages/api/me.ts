@@ -7,6 +7,8 @@ import { peekPrice } from "@/lib/market";
 import { dayKey } from "@/lib/log";
 
 /** Mini App খুললে প্রথম call: user state + task + article card + চলমান run + withdraw ইতিহাস (গোপন কিছু ছাড়া) */
+const snapAt = new Map<string, number>();
+
 export default route(async (req, res) => {
   const user = authenticate(req);
   const { u, settings } = await ensureUser(user, { soft: true, touch: true });
@@ -88,6 +90,12 @@ export default route(async (req, res) => {
   }
   const price = await peekPrice(settings);
   const unread = Number((await db().ref(`inbox_meta/${user.id}/unread`).get()).val()) || 0;
+  // নিরাপত্তা snapshot (১০ মিনিটে একবার): record হারালে ব্যালেন্স ফেরত আনতে কাজে লাগে
+  if ((u.balance > 0 || (u.usdt_u || 0) > 0) && now - (snapAt.get(user.id) || 0) > 600000) {
+    snapAt.set(user.id, now);
+    if (snapAt.size > 5000) snapAt.clear();
+    db().ref(`bal_snap/${user.id}`).set({ b: u.balance, u: u.usdt_u || 0, earn: u.earn || null, spent: u.spent || null, usdt_tot: u.usdt_tot || null, at: now }).catch(() => {});
+  }
   res.json({
     success: true,
     user: {
@@ -109,7 +117,7 @@ export default route(async (req, res) => {
     announcement,
     price,
     unread,
-    showIntro: !u.onboarded && !!u.created_at && now - u.created_at < 3 * 86400000,
+    showIntro: !u.onboarded && !u.recovered && !(u.balance > 0) && !u.earn && !!u.created_at && now - u.created_at < 3 * 86400000,
     dailyReady: settings.daily_enabled && u.daily?.day !== dayKey(now),
     cfg,
   });

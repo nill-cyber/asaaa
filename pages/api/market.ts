@@ -41,6 +41,8 @@ export default route(async (req, res) => {
     deposit: {
       enabled: s.deposit_enabled,
       networks: s.deposit_networks.map((n) => ({ id: n.id, name: n.name, address: n.address, min: n.min, note: n.note, auto: s.binance_auto && !!n.binance_network })),
+      binanceId: s.binance_id_enabled && s.binance_auto && !!s.binance_id ? { id: s.binance_id, min: s.binance_id_min } : null,
+      stars: s.stars_enabled ? { per: s.stars_per_usdt, min: s.stars_min_usdt, max: s.stars_max_usdt } : null,
     },
     payout: {
       enabled: s.payout_enabled,

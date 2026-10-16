@@ -5,7 +5,7 @@ import { ServerValue } from "firebase-admin/database";
 import { ArticleSite, normUrl } from "@/lib/chain";
 import { adminLog, dayKey } from "@/lib/log";
 import { getSettings, invalidateSettings, parseSettings } from "@/lib/settings";
-import { tgCall } from "@/lib/telegram";
+import { tgCall, webhookSecret } from "@/lib/telegram";
 import type { UserRecord } from "@/lib/user";
 import { earn, usdtTot, activity } from "@/lib/wallet";
 import { notify } from "@/lib/notify";
@@ -14,7 +14,7 @@ import { weekIndex } from "@/lib/wallet";
 import { processTriggers } from "@/lib/triggers";
 import { getPrice, fromU, toU } from "@/lib/market";
 import { settleDeposit, recheckAuto } from "@/lib/deposits";
-import { checkKey, clearCreds, credHint, getCreds, saveCreds } from "@/lib/binance";
+import { checkKey, clearCreds, credHint, getCreds, saveCreds, recentDeposits, payReceived } from "@/lib/binance";
 
 const idRe = /^[\w-]{1,64}$/;
 
@@ -397,7 +397,13 @@ export default route(async (req, res) => {
       let out: any;
       try {
         const chk = await checkKey(c);
-        out = { at: Date.now(), ok: chk.ok, msg: chk.ok ? "Connected — key is read-only" : "Unsafe key: " + chk.problems.join("; ") };
+        let extra = "";
+        if (chk.ok) {
+          const probe = async (label: string, f: () => Promise<any>) => { try { await f(); extra += ` · ${label}: OK`; } catch (e: any) { extra += ` · ${label}: FAILED (${e?.message || "error"})`; } };
+          await probe("Deposit history", () => recentDeposits(c, 1));
+          await probe("Binance Pay history", () => payReceived(c, Date.now() - 86400000));
+        }
+        out = { at: Date.now(), ok: chk.ok && !/FAILED/.test(extra), msg: chk.ok ? "Connected — key is read-only" + extra : "Unsafe key: " + chk.problems.join("; ") };
       } catch (e: any) {
         out = { at: Date.now(), ok: false, msg: e?.message || "Check failed" };
       }
@@ -407,6 +413,19 @@ export default route(async (req, res) => {
     case "binanceClear": {
       await clearCreds();
       await adminLog(who, "binance_key_removed", {});
+      return void res.json({ success: true });
+    }
+    case "starsStatus": {
+      const r = await tgCall("getWebhookInfo");
+      const url = String(r.result?.url || "");
+      return void res.json({ success: true, connected: !!url && url.endsWith("/api/tg-webhook"), url, pending: r.result?.pending_update_count || 0, error: r.result?.last_error_message || "" });
+    }
+    case "starsConnect": {
+      const host = String(req.headers["x-forwarded-host"] || req.headers.host || "");
+      if (!host || /localhost/.test(host)) throw new HttpError(400, "Open the admin panel from your live site to connect");
+      const r = await tgCall("setWebhook", { url: `https://${host}/api/tg-webhook`, secret_token: webhookSecret(), allowed_updates: JSON.stringify(["message", "pre_checkout_query"]), drop_pending_updates: "false" });
+      if (!r.ok) throw new HttpError(400, r.description || "Telegram refused the webhook");
+      await adminLog(who, "stars_webhook_connected", { host });
       return void res.json({ success: true });
     }
     case "binanceRecheck":

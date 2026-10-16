@@ -7,7 +7,7 @@ import { ensureUser } from "@/lib/user";
 export default route(async (req, res) => {
   const user = authenticate(req);
   await rateLimit(user.id, "onboard", 10);
-  await ensureUser(user, { soft: true });
+  await ensureUser(user, { soft: true, touch: true });
   await db().ref(`users/${user.id}/onboarded`).set(true);
   res.json({ success: true });
 });

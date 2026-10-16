@@ -50,6 +50,7 @@ export default function Admin() {
   const [toast, setToast] = useState<{ t: string; ok: boolean } | null>(null);
   const [pending, setPending] = useState(0);
   const [pendingU, setPendingU] = useState(0);
+  const [pendingP, setPendingP] = useState(0);
   const [cpt, setCpt] = useState(1000);
 
   const say = useCallback((t: string, ok = false) => {
@@ -93,7 +94,7 @@ export default function Admin() {
   useEffect(() => {
     if (!authed) return;
     api("admin", { action: "stats" })
-      .then((d: any) => { setPending(d.pending?.count || 0); setPendingU((d.usdt?.pendingDeposits?.count || 0) + (d.usdt?.pendingPayouts?.count || 0)); })
+      .then((d: any) => { setPending(d.pending?.count || 0); setPendingU((d.usdt?.pendingDeposits?.count || 0)); setPendingP(d.usdt?.pendingPayouts?.count || 0); })
       .catch(() => {});
   }, [authed, tab]);
 
@@ -144,7 +145,7 @@ export default function Admin() {
             >
               <Icon name={icon} size={18} />
               {label}
-              {k === "withdrawals" && pending > 0 && <span className="cnt">{pending}</span>}
+              {k === "withdrawals" && pending + pendingP > 0 && <span className="cnt">{pending + pendingP}</span>}
               {k === "usdt" && pendingU > 0 && <span className="cnt">{pendingU}</span>}
             </button>
           ))}
@@ -540,73 +541,98 @@ function Tasks({ call }: { call: Call }) {
   );
 }
 
-/* ---------------- Withdrawals ---------------- */
+/* ---------------- Withdrawals (USDT + TFUEL/other) ---------------- */
 function Withdrawals({ call }: { call: Call }) {
   const tf = useTf();
+  const [kind, setKind] = useState<"usdt" | "coin">("usdt");
   const [rows, setRows] = useState<any[]>([]);
+  const [urows, setUrows] = useState<any[]>([]);
   const [status, setStatus] = useState("pending");
   const [q, setQ] = useState("");
   const [notes, setNotes] = useState<Record<string, string>>({});
   const load = useCallback(async () => {
     const d: any = await call({ action: "list" });
     if (d) setRows(d.withdrawals);
+    const u: any = await call({ action: "usdtWithdrawals" });
+    if (u) setUrows(u.items);
   }, [call]);
   useEffect(() => {
     load();
   }, [load]);
+  const src = kind === "usdt" ? urows : rows;
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return rows.filter((w) => (status === "all" || w.status === status) && (!s || [w.uid, w.name, w.account, w.method].some((x) => String(x || "").toLowerCase().includes(s))));
-  }, [rows, status, q]);
+    return src.filter((w) => (status === "all" || w.status === status) && (!s || [w.uid, w.name, w.account, w.address, w.method, w.network_name].some((x) => String(x || "").toLowerCase().includes(s))));
+  }, [src, status, q]);
+  const pendU = urows.filter((w) => w.status === "pending").length;
+  const pendC = rows.filter((w) => w.status === "pending").length;
   const csv = () => {
-    const head = ["id", "date", "user_id", "name", "amount", "method", "account", "status", "note"];
+    const head = ["id", "date", "user_id", "name", "amount", "fee", "method", "account", "status", "note"];
     const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const lines = [head.join(",")].concat(shown.map((w) => [w.id, new Date(w.created_at).toISOString(), w.uid, w.name, w.amount, w.method, w.account, w.status, w.note].map(esc).join(",")));
+    const lines = [head.join(",")].concat(shown.map((w) => [w.id, new Date(w.created_at).toISOString(), w.uid, w.name, w.amount, w.fee ?? "", w.network_name || w.method, w.address || w.account, w.status, w.note].map(esc).join(",")));
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
-    a.download = "withdrawals.csv";
+    a.download = `withdrawals-${kind}.csv`;
     a.click();
   };
-  const act = async (id: string, action: "payWithdrawal" | "rejectWithdrawal") => {
-    if (action === "rejectWithdrawal" && !confirm("Reject and refund the coins to the user?")) return;
-    if (await call({ action, id, note: notes[id] || "" }, action === "payWithdrawal" ? "Marked as paid" : "Rejected & refunded")) load();
+  const act = async (id: string, pay: boolean) => {
+    if (!pay && !confirm(kind === "usdt" ? "Reject and refund the USDT to the user?" : "Reject and refund the coins to the user?")) return;
+    const action = kind === "usdt" ? (pay ? "payUsdt" : "rejectUsdt") : pay ? "payWithdrawal" : "rejectWithdrawal";
+    if (await call({ action, id, note: notes[id] || "" }, pay ? "Marked as paid" : "Rejected & refunded")) load();
   };
   return (
     <>
-      <Head2 title="Withdrawals" sub="Pay manually, then mark as paid. Rejecting refunds the coins.">
+      <Head2 title="Withdrawals" sub="Pay manually, then mark as paid. Rejecting refunds the user.">
         <button className="btn sec sm" onClick={csv}><Icon name="download" size={15} /> CSV</button>
       </Head2>
+      <div className="seg" style={{ marginBottom: 10 }}>
+        <button className={kind === "usdt" ? "on" : ""} onClick={() => setKind("usdt")}>USDT payouts{pendU ? ` (${pendU})` : ""}</button>
+        <button className={kind === "coin" ? "on" : ""} onClick={() => setKind("coin")}>TFUEL / other{pendC ? ` (${pendC})` : ""}</button>
+      </div>
       <div className="toolbar">
         <div className="seg" style={{ margin: 0 }}>
           {["pending", "paid", "rejected", "all"].map((s) => (
             <button key={s} className={status === s ? "on" : ""} onClick={() => setStatus(s)}>{s[0].toUpperCase() + s.slice(1)}</button>
           ))}
         </div>
-        <input placeholder="Search user, name, account…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input placeholder="Search user, name, address…" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
       {shown.length === 0 && <div className="card empty">Nothing here</div>}
-      {shown.map((w) => (
-        <div className="card" key={w.id}>
-          <div className="row" style={{ alignItems: "flex-start" }}>
-            <div>
-              <div className="b num" style={{ fontSize: 17 }}>{tf(w.amount)} TFUEL</div>
-              <div className="sm">{w.method} · <b style={{ userSelect: "text" }}>{w.account}</b> <button className="btn ghost sm" style={{ padding: 2 }} onClick={() => navigator.clipboard?.writeText(w.account)}><Icon name="copy" size={14} /></button></div>
-              <div className="xs muted">{w.name} · ID {w.uid} · {when(w.created_at)}</div>
-              {w.note && <div className="xs" style={{ marginTop: 4 }}>Note: {w.note}</div>}
-            </div>
-            <span className={`tag ${w.status === "paid" ? "ok" : w.status === "rejected" ? "err" : "warn"}`}>{w.status}</span>
-          </div>
-          {w.status === "pending" && (
-            <>
-              <input style={{ marginTop: 10 }} placeholder="Note / transaction ID (optional)" value={notes[w.id] || ""} onChange={(e) => setNotes({ ...notes, [w.id]: e.target.value })} />
-              <div className="toolbar" style={{ marginTop: 8, marginBottom: 0 }}>
-                <button className="btn good sm" onClick={() => act(w.id, "payWithdrawal")}><Icon name="check" size={15} /> Mark paid</button>
-                <button className="btn danger sm" onClick={() => act(w.id, "rejectWithdrawal")}>Reject & refund</button>
+      {shown.map((w) => {
+        const acc = w.address || w.account || "";
+        return (
+          <div className="card" key={w.id}>
+            <div className="row" style={{ alignItems: "flex-start" }}>
+              <div>
+                {kind === "usdt" ? (
+                  <>
+                    <div className="b num" style={{ fontSize: 17 }}>{Number(w.amount).toFixed(2)} USDT</div>
+                    <div className="sm"><b>Send {Number(w.receive).toFixed(2)} USDT</b> (fee {Number(w.fee || 0).toFixed(2)}) · {w.network_name}</div>
+                  </>
+                ) : (
+                  <>
+                    <div className="b num" style={{ fontSize: 17 }}>{tf(w.amount)} TFUEL</div>
+                    <div className="sm">{w.method}</div>
+                  </>
+                )}
+                <div className="sm"><b style={{ userSelect: "text", wordBreak: "break-all" }}>{acc}</b> <button className="btn ghost sm" style={{ padding: 2 }} onClick={() => navigator.clipboard?.writeText(acc)}><Icon name="copy" size={14} /></button></div>
+                <div className="xs muted">{w.name} · ID {w.uid} · {when(w.created_at)}</div>
+                {w.note && <div className="xs" style={{ marginTop: 4 }}>Note: {w.note}</div>}
               </div>
-            </>
-          )}
-        </div>
-      ))}
+              <span className={`tag ${w.status === "paid" ? "ok" : w.status === "rejected" ? "err" : "warn"}`}>{w.status}</span>
+            </div>
+            {w.status === "pending" && (
+              <>
+                <input style={{ marginTop: 10 }} placeholder="Note / transaction ID (optional)" value={notes[w.id] || ""} onChange={(e) => setNotes({ ...notes, [w.id]: e.target.value })} />
+                <div className="toolbar" style={{ marginTop: 8, marginBottom: 0 }}>
+                  <button className="btn good sm" onClick={() => act(w.id, true)}><Icon name="check" size={15} /> Mark paid</button>
+                  <button className="btn danger sm" onClick={() => act(w.id, false)}>Reject & refund</button>
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })}
     </>
   );
 }
@@ -808,6 +834,39 @@ function BinanceCard({ s, set, call }: { s: any; set: (k: string, v: any) => voi
   );
 }
 
+
+/* ---------------- Binance ID + Telegram Stars deposit methods ---------------- */
+function MoreDeposits({ s, set, call }: { s: any; set: (k: string, v: any) => void; call: Call }) {
+  const [st, setSt] = useState<any>(null);
+  const load = useCallback(async () => setSt(await call({ action: "starsStatus" })), [call]);
+  useEffect(() => { load(); }, [load]);
+  return (
+    <>
+      <div className="card">
+        <div className="row"><div><div className="title">Binance ID deposits</div><div className="sub">Users send USDT to your Binance ID (internal transfer / Binance Pay — no network fee). Needs Binance auto-approve with a saved key. Matched by the exact amount we give the user.</div></div><Toggle on={!!s.binance_id_enabled} onChange={(v) => set("binance_id_enabled", v)} /></div>
+        <div className="grid2">
+          <div><label>Your Binance ID / Pay ID</label><input inputMode="numeric" value={s.binance_id} placeholder="e.g. 123456789" onChange={(e) => set("binance_id", e.target.value.replace(/\D/g, ""))} /></div>
+          <div><label>Minimum (USDT)</label><input inputMode="decimal" value={s.binance_id_min} onChange={(e) => set("binance_id_min", e.target.value)} /></div>
+        </div>
+      </div>
+      <div className="card">
+        <div className="row"><div><div className="title">Pay with Telegram Stars</div><div className="sub">Users buy USDT balance with Stars inside Telegram. Turn off any time.</div></div><Toggle on={!!s.stars_enabled} onChange={(v) => set("stars_enabled", v)} /></div>
+        <div className="grid3">
+          <div><label>Stars per 1 USDT</label><input inputMode="decimal" value={s.stars_per_usdt} onChange={(e) => set("stars_per_usdt", e.target.value)} /></div>
+          <div><label>Min (USDT)</label><input inputMode="decimal" value={s.stars_min_usdt} onChange={(e) => set("stars_min_usdt", e.target.value)} /></div>
+          <div><label>Max (USDT)</label><input inputMode="decimal" value={s.stars_max_usdt} onChange={(e) => set("stars_max_usdt", e.target.value)} /></div>
+        </div>
+        <div className="xs muted" style={{ marginTop: 8 }}>Telegram pays you roughly $0.013 per Star after fees, so set the rate with a margin (77 Stars ≈ $1.00 gross). Remember “Save changes”.</div>
+        <div className="row" style={{ marginTop: 12 }}>
+          <div className="sm">{st ? (st.connected ? <span className="tag ok">Payments connected</span> : <span className="tag warn">Not connected</span>) : "…"}{st?.error ? <span className="xs muted"> · last error: {st.error}</span> : null}</div>
+          <button className="btn sec sm" onClick={async () => { if (await call({ action: "starsConnect" }, "Connected")) load(); }}>{st?.connected ? "Reconnect" : "Connect Telegram payments"}</button>
+        </div>
+        <div className="xs muted" style={{ marginTop: 6 }}>Connecting points your bot&apos;s webhook to this site so Telegram can confirm payments. Do this once after deploying.</div>
+      </div>
+    </>
+  );
+}
+
 /* ---------------- USDT desk ---------------- */
 function UsdtDesk({ call }: { call: Call }) {
   const tf = useTf();
@@ -925,7 +984,7 @@ function MarketPage({ call }: { call: Call }) {
   const set = (k: string, v: any) => setS({ ...s, [k]: v });
   const setNet = (key: string, i: number, patch: any) => set(key, s[key].map((n: any, j: number) => (j === i ? { ...n, ...patch } : n)));
   const save = async () => {
-    const keys = ["trade_enabled", "buy_enabled", "sell_enabled", "coins_per_tfuel", "trade_fee_pct", "min_trade_usdt", "max_trade_usdt", "daily_trade_limit_usdt", "price_override", "deposit_enabled", "deposit_networks", "binance_auto", "binance_auto_max", "payout_enabled", "payout_networks"];
+    const keys = ["trade_enabled", "buy_enabled", "sell_enabled", "coins_per_tfuel", "trade_fee_pct", "min_trade_usdt", "max_trade_usdt", "daily_trade_limit_usdt", "price_override", "deposit_enabled", "deposit_networks", "binance_auto", "binance_auto_max", "binance_id_enabled", "binance_id", "binance_id_min", "stars_enabled", "stars_per_usdt", "stars_min_usdt", "stars_max_usdt", "payout_enabled", "payout_networks"];
     const body: any = {};
     keys.forEach((k) => (body[k] = s[k]));
     const d: any = await call({ action: "saveSettings", settings: body }, "Saved");
@@ -982,6 +1041,7 @@ function MarketPage({ call }: { call: Call }) {
       </div>
 
       <BinanceCard s={s} set={set} call={call} />
+      <MoreDeposits s={s} set={set} call={call} />
 
       <div className="card">
         <div className="row"><div><div className="title">USDT withdrawals</div><div className="sub">You send payouts manually. No wallet keys are ever stored in the app.</div></div><Toggle on={s.payout_enabled} onChange={(v) => set("payout_enabled", v)} /></div>

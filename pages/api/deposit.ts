@@ -4,7 +4,9 @@ import { db } from "@/lib/firebase";
 import { sha256, sortableId } from "@/lib/crypto";
 import { ensureUser, MAX_AUTH_AGE_MONEY } from "@/lib/user";
 import { getCreds } from "@/lib/binance";
-import { allocateIntent, autoCheck, consumeIntent } from "@/lib/deposits";
+import { allocateIntent, autoCheck, consumeIntent, INTENT_TTL_MS } from "@/lib/deposits";
+import { tgCall } from "@/lib/telegram";
+import { toU } from "@/lib/market";
 import { fromU } from "@/lib/market";
 
 /**
@@ -17,7 +19,7 @@ export default route(async (req, res) => {
   const user = authenticate(req, MAX_AUTH_AGE_MONEY);
   await rateLimit(user.id, "deposit", 8);
   const { settings: s } = await ensureUser(user);
-  if (!s.deposit_enabled) throw new HttpError(403, "deposit_disabled");
+  if (!s.deposit_enabled && !s.stars_enabled && !s.binance_id_enabled) throw new HttpError(403, "deposit_disabled");
   const action = String(req.body?.action || "submit");
 
   if (action === "recheck") {
@@ -29,9 +31,36 @@ export default route(async (req, res) => {
     return void res.json({ success: true, status: r.status });
   }
 
-  const net = s.deposit_networks.find((n) => n.id === String(req.body?.network || ""));
+  const ID_NET = "binance-id";
+
+  if (action === "stars") {
+    if (!s.stars_enabled) throw new HttpError(403, "stars_disabled");
+    const amount = Math.round(Number(req.body?.amount) * 100) / 100;
+    if (!Number.isFinite(amount) || amount < s.stars_min_usdt || amount > s.stars_max_usdt) return void res.status(400).json({ success: false, error: "stars_range", min: s.stars_min_usdt, max: s.stars_max_usdt });
+    const stars = Math.ceil(amount * s.stars_per_usdt);
+    const oid = sortableId();
+    const r = await tgCall("createInvoiceLink", {
+      title: `Deposit ${amount} USDT`,
+      description: `Add ${amount} USDT to your wallet`,
+      payload: oid,
+      currency: "XTR",
+      prices: JSON.stringify([{ label: `${amount} USDT`, amount: stars }]),
+    });
+    if (!r.ok || !r.result) throw new HttpError(502, "stars_unavailable");
+    await db().ref(`stars_orders/${oid}`).set({ uid: user.id, usdt_u: toU(amount), stars, status: "open", created_at: Date.now() });
+    return void res.json({ success: true, link: r.result, stars, amount });
+  }
+
+  const isId = String(req.body?.network || "") === ID_NET;
+  const net = isId
+    ? ({ id: ID_NET, name: "Binance ID", address: s.binance_id, min: s.binance_id_min, note: "", binance_network: "" } as any)
+    : s.deposit_networks.find((n) => n.id === String(req.body?.network || ""));
   if (!net) throw new HttpError(400, "bad_network");
-  const auto = s.binance_auto && !!net.binance_network && !!(await getCreds());
+  if (!isId && !s.deposit_enabled) throw new HttpError(403, "deposit_disabled");
+  if (isId && (!s.binance_id_enabled || !s.binance_id)) throw new HttpError(403, "deposit_disabled");
+  const creds = await getCreds();
+  const auto = isId ? s.binance_auto && !!creds : s.binance_auto && !!net.binance_network && !!creds;
+  if (isId && !auto) throw new HttpError(403, "deposit_disabled"); // Binance ID deposit-এর জন্য auto-check বাধ্যতামূলক
 
   if (action === "intent") {
     if (!auto) return void res.json({ success: true, auto: false });
@@ -42,7 +71,9 @@ export default route(async (req, res) => {
   }
 
   const txid = String(req.body?.txid || "").trim();
-  if (!/^(0x)?[A-Za-z0-9]{16,100}$/.test(txid)) throw new HttpError(400, "bad_txid");
+  if (txid && !/^(0x)?[A-Za-z0-9:_-]{6,100}$/.test(txid)) throw new HttpError(400, "bad_txid");
+  if (!auto && !txid) throw new HttpError(400, "bad_txid");
+  if (!auto && !/^(0x)?[A-Za-z0-9]{16,100}$/.test(txid)) throw new HttpError(400, "bad_txid");
   let amount = Number(req.body?.amount);
   let intent: any = null;
   if (auto) {
@@ -56,9 +87,8 @@ export default route(async (req, res) => {
   const mine = ((await db().ref(`users/${user.id}/deposits`).get()).val() || {}) as Record<string, any>;
   if (Object.values(mine).filter((d) => d.status === "pending").length >= 5) throw new HttpError(429, "too_many_pending");
 
-  // একই txid দুইবার নয় (কেউ অন্যের/পুরনো txid ব্যবহার করলেও আটকায়)
-  // auto-মোডে txid-র দাবি user-ভিত্তিক (অন্য কেউ আগে জমা দিয়ে আটকাতে পারে না); একবারের বেশি credit আটকায় settleDeposit
-  const key = sha256(auto ? `${txid.toLowerCase()}:${user.id}` : txid.toLowerCase());
+  // একই txid দুইবার নয়; auto-মোডে দাবি user-ভিত্তিক (অন্য কেউ আগে জমা দিয়ে আটকাতে পারে না); একবারের বেশি credit আটকায় settleDeposit
+  const key = sha256(auto ? (txid ? `${txid.toLowerCase()}:${user.id}` : `intent:${user.id}:${intent.amount_u}:${intent.exp}`) : txid.toLowerCase());
   const claim = await db()
     .ref(`deposit_txids/${key}`)
     .transaction((cur) => (cur === null ? user.id : undefined));
@@ -66,10 +96,11 @@ export default route(async (req, res) => {
 
   const id = sortableId();
   const now = Date.now();
-  const rec: any = { network: net.id, network_name: net.name, txid, amount, status: "pending", created_at: now };
+  const rec: any = { network: net.id, network_name: net.name, txid: isId && txid ? "bid:" + txid : txid, amount, status: "pending", created_at: now };
+  if (isId) rec.method = "binance_id";
   if (auto) rec.auto = true;
   const full: any = { ...rec, uid: user.id, name: user.first_name || "User", txkey: key };
-  if (auto) { full.intent_u = intent.amount_u; }
+  if (auto) { full.intent_u = intent.amount_u; full.intent_at = intent.exp - INTENT_TTL_MS; }
   await db().ref().update({ [`deposits/${id}`]: full, [`users/${user.id}/deposits/${id}`]: rec });
   if (!auto) return void res.json({ success: true, id, status: "pending" });
 

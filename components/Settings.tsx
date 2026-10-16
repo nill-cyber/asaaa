@@ -38,7 +38,7 @@ export function AddrPicker({ acc, onPick }: { acc: Account | null; onPick: (addr
   );
 }
 
-export function SettingsPanel({ say }: { say: Say }) {
+export function SettingsPanel({ say, notify, account }: { say: Say; notify?: React.ReactNode; account?: React.ReactNode }) {
   const { a, setA, load } = useAccount();
   const [theme, setT] = useState<Theme>("light");
   useEffect(() => setT(getTheme()), []);
@@ -64,13 +64,18 @@ export function SettingsPanel({ say }: { say: Say }) {
 
   return (
     <>
-      <div className="title" style={{ marginBottom: 6 }}>Appearance</div>
-      <div className="seg" style={{ marginBottom: 12 }}>
+      <div className="mhead" style={{ marginTop: 4 }}>Appearance</div>
+      <div className="card">
+      <div className="sub" style={{ marginBottom: 8 }}>Choose how the app looks. Auto follows your phone.</div>
+      <div className="seg" style={{ marginBottom: 0 }}>
         {(["light", "dark", "auto"] as Theme[]).map((t) => (
           <button key={t} className={theme === t ? "on" : ""} onClick={() => { setT(t); setTheme(t); }}>{t === "auto" ? "Auto" : t === "dark" ? "Dark" : "Light"}</button>
         ))}
       </div>
+      </div>
 
+      <div className="mhead">Security</div>
+      <div className="card">
       <div className="row" style={{ alignItems: "flex-start" }}>
         <div className="left">
           <div className="ico green"><Icon name="lock" /></div>
@@ -89,8 +94,10 @@ export function SettingsPanel({ say }: { say: Say }) {
         {a.pin && <button className="btn sec" disabled={busy || cur.length < 4} onClick={async () => { if (await act({ action: "removePin", current: cur }, "PIN turned off")) setCur(""); }}>Turn off</button>}
       </div>
       <div className="xs muted" style={{ marginTop: 6 }}>Forgot your PIN? Contact support and an admin can reset it.</div>
+      </div>
 
-      <div className="title" style={{ margin: "18px 0 6px" }}>Saved addresses</div>
+      <div className="mhead">Saved addresses</div>
+      <div className="card">
       {a.addrs.length === 0 && <div className="small muted">No saved addresses yet.</div>}
       {a.addrs.map((x) => (
         <div className="hist" key={x.id}>
@@ -110,6 +117,9 @@ export function SettingsPanel({ say }: { say: Say }) {
           <button className="btn block" style={{ marginTop: 10 }} disabled={busy || !label.trim() || addr.trim().length < 6} onClick={async () => { if (await act({ action: "addAddr", label, address: addr }, "Address saved")) { setLabel(""); setAddr(""); } }}>Save address</button>
         </>
       )}
+      </div>
+      {notify && (<><div className="mhead">Notifications</div><div className="card">{notify}</div></>)}
+      {account && (<><div className="mhead">Account</div><div className="card">{account}</div></>)}
     </>
   );
 }

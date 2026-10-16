@@ -30,6 +30,13 @@ export interface Settings {
   deposit_networks: DepositNet[];
   binance_auto: boolean; // Binance deposit history মিলিয়ে নিজে approve
   binance_auto_max: number; // এর বেশি হলে verify হয় কিন্তু admin approve করে (USDT)
+  binance_id_enabled: boolean; // Binance ID (internal / Pay transfer) দিয়ে deposit
+  binance_id: string; // তোমার Binance Pay ID / UID
+  binance_id_min: number;
+  stars_enabled: boolean; // Telegram Stars দিয়ে deposit
+  stars_per_usdt: number; // ১ USDT = কত Stars
+  stars_min_usdt: number;
+  stars_max_usdt: number;
   payout_enabled: boolean;
   payout_networks: PayoutNet[];
 
@@ -93,6 +100,13 @@ export const DEFAULTS: Settings = {
   deposit_networks: [],
   binance_auto: false,
   binance_auto_max: 200,
+  binance_id_enabled: false,
+  binance_id: "",
+  binance_id_min: 1,
+  stars_enabled: false,
+  stars_per_usdt: 77,
+  stars_min_usdt: 1,
+  stars_max_usdt: 100,
   payout_enabled: false,
   payout_networks: [],
   earn_per_tap: 1,
@@ -277,6 +291,13 @@ export function parseSettings(b: any, cur: Settings): Settings {
     deposit_networks: dnets,
     binance_auto: bool("binance_auto"),
     binance_auto_max: num(b.binance_auto_max, "binance_auto_max", 0, 1e6, cur.binance_auto_max),
+    binance_id_enabled: bool("binance_id_enabled"),
+    binance_id: (() => { const v = str(b.binance_id, 20, cur.binance_id); if (v && !/^\d{5,20}$/.test(v)) throw new HttpError(400, "Binance ID must be digits only"); return v; })(),
+    binance_id_min: num(b.binance_id_min, "binance_id_min", 0.01, 1e6, cur.binance_id_min),
+    stars_enabled: bool("stars_enabled"),
+    stars_per_usdt: num(b.stars_per_usdt, "stars_per_usdt", 1, 100000, cur.stars_per_usdt),
+    stars_min_usdt: num(b.stars_min_usdt, "stars_min_usdt", 0.01, 1e5, cur.stars_min_usdt),
+    stars_max_usdt: num(b.stars_max_usdt, "stars_max_usdt", 0.01, 1e5, cur.stars_max_usdt),
     payout_enabled: bool("payout_enabled"),
     payout_networks: pnets,
     earn_per_tap: Math.floor(num(b.earn_per_tap, "earn_per_tap", 1, 1000, cur.earn_per_tap)),
