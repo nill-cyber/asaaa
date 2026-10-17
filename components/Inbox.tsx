@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/client";
+import Logo from "@/components/Logo";
 import Icon from "@/components/Icons";
 
 const ago = (t: number) => {
@@ -70,6 +71,33 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         </div>
         <button className="btn block" onClick={() => (last ? finish() : setI(i + 1))}>{last ? "Get started" : "Next"}</button>
         {!last && <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={finish}>Skip</button>}
+      </div>
+    </div>
+  );
+}
+
+/** প্রথমবার ঢুকলে: কোন currency-তে দেখতে/খরচ করতে চায় */
+export function CurrencyPick({ onDone }: { onDone: (c: "tfuel" | "usdt") => void }) {
+  const [busy, setBusy] = useState(false);
+  const pick = async (c: "tfuel" | "usdt") => {
+    setBusy(true);
+    try { await api("account", { action: "setCur", cur: c }); } catch {}
+    onDone(c);
+  };
+  const Card = ({ k, name, sub }: { k: "tfuel" | "usdt"; name: string; sub: string }) => (
+    <button className="mrow" disabled={busy} onClick={() => pick(k)} style={{ border: "1px solid var(--line)", borderRadius: 16, marginBottom: 10 }}>
+      <span className="mi" style={{ background: "transparent" }}><Logo kind={k} size={34} /></span>
+      <span className="mt">{name}<div className="ms">{sub}</div></span>
+      <span className="mc"><Icon name="chevron" size={18} /></span>
+    </button>
+  );
+  return (
+    <div className="sheet-bg" style={{ alignItems: "center" }}>
+      <div className="sheet" style={{ borderRadius: 22, margin: 16, paddingBottom: 20 }}>
+        <div className="title" style={{ fontSize: 20, textAlign: "center" }}>Choose your currency</div>
+        <div className="sub" style={{ margin: "6px 0 16px", textAlign: "center" }}>Used to show your balance and as the default when you pay. You can change it any time in Settings.</div>
+        <Card k="tfuel" name="TFUEL" sub="Show balances in TFUEL, pay with TFUEL" />
+        <Card k="usdt" name="USDT" sub="Show balances in dollars, pay with USDT" />
       </div>
     </div>
   );

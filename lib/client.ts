@@ -55,6 +55,18 @@ export function fmtUsd(v: number): string {
 }
 
 const ERR: Record<string, string> = {
+  bot_not_started: "Open our bot in Telegram and press Start first, then try again.",
+  reset_expired: "That code has expired. Request a new one.",
+  reset_wrong: "Wrong code. Please check and try again.",
+  wait_a_minute: "Please wait a minute before asking for another code.",
+  no_pin: "You haven't set a PIN.",
+  ticket_limit: "You have too many open tickets. Wait for a reply first.",
+  shop_unavailable: "This shop isn't available right now.",
+  shop_not_connected: "Connect this shop first.",
+  order_not_found: "This payment request wasn't found.",
+  order_expired: "This payment request has expired. Go back to the shop and try again.",
+  order_paid: "This order has already been paid.",
+  currency_off: "This currency isn't accepted by this shop.",
   no_site_available: "No article site is available right now. Please try again later.",
   cooldown: "This site isn't ready yet. Try another one or come back later.",
   no_active_run: "Start an article site first.",

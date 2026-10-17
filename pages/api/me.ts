@@ -5,6 +5,7 @@ import { ensureUser, currentEnergy, effective, settleCommission } from "@/lib/us
 import { ArticleSite, Run } from "@/lib/chain";
 import { peekPrice } from "@/lib/market";
 import { dayKey } from "@/lib/log";
+import { trackLogin } from "@/lib/devices";
 
 /** Mini App খুললে প্রথম call: user state + task + article card + চলমান run + withdraw ইতিহাস (গোপন কিছু ছাড়া) */
 const snapAt = new Map<string, number>();
@@ -13,6 +14,8 @@ export default route(async (req, res) => {
   const user = authenticate(req);
   const { u, settings } = await ensureUser(user, { soft: true, touch: true });
   const now = Date.now();
+  const prefsP = db().ref(`user_prefs/${user.id}/cur`).get();
+  await trackLogin(user.id, req);
   if (u.ref_count) { const g = await settleCommission(user.id); if (g) u.balance += g; }
 
   const cfg = {
@@ -23,6 +26,7 @@ export default route(async (req, res) => {
     withdrawEnabled: settings.withdraw_enabled,
     earnPerTap: settings.earn_per_tap,
     coinsPerTfuel: settings.coins_per_tfuel,
+    shops: settings.shops_enabled,
   };
   const announcement =
     settings.announcement.enabled && settings.announcement.text ? settings.announcement : null;
@@ -47,7 +51,7 @@ export default route(async (req, res) => {
     min_wait_seconds: t.min_wait_seconds,
     channel_id: t.type === "telegram_join" ? t.channel_id : undefined,
     done: !!u.completed_tasks?.[id]?.claimed,
-  }));
+  })).filter((t) => !t.done); // একবারের টাস্ক শেষ হলে আর দেখানো হয় না
 
   // চলমান run
   let run: { site_id: string; step_done: number; total: number; status: string } | null = null;
@@ -117,6 +121,7 @@ export default route(async (req, res) => {
     announcement,
     price,
     unread,
+    cur: (await prefsP).val() === "usdt" ? "usdt" : (await prefsP).val() === "tfuel" ? "tfuel" : null,
     showIntro: !u.onboarded && !u.recovered && !(u.balance > 0) && !u.earn && !!u.created_at && now - u.created_at < 3 * 86400000,
     dailyReady: settings.daily_enabled && u.daily?.day !== dayKey(now),
     cfg,

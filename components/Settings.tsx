@@ -4,7 +4,7 @@ import Icon from "@/components/Icons";
 import { getTheme, setTheme, Theme } from "@/lib/theme";
 
 type Say = (t: string, ok?: boolean) => void;
-export interface Account { pin: boolean; pin_locked: boolean; addrs: { id: string; label: string; address: string }[] }
+export interface Account { pin: boolean; pin_locked: boolean; cur: "tfuel" | "usdt" | null; login_alert: boolean; devices: { label: string; last: number; first: number }[]; addrs: { id: string; label: string; address: string }[] }
 
 /** PIN ও Saved addresses — Settings ও withdraw ফর্ম দুই জায়গাই ব্যবহার করে */
 export function useAccount() {
@@ -38,7 +38,7 @@ export function AddrPicker({ acc, onPick }: { acc: Account | null; onPick: (addr
   );
 }
 
-export function SettingsPanel({ say, notify, account }: { say: Say; notify?: React.ReactNode; account?: React.ReactNode }) {
+export function SettingsPanel({ say, notify, account, onCur }: { say: Say; notify?: React.ReactNode; account?: React.ReactNode; onCur?: (c: "tfuel" | "usdt") => void }) {
   const { a, setA, load } = useAccount();
   const [theme, setT] = useState<Theme>("light");
   useEffect(() => setT(getTheme()), []);
@@ -47,6 +47,8 @@ export function SettingsPanel({ say, notify, account }: { say: Say; notify?: Rea
   const [busy, setBusy] = useState(false);
   const [label, setLabel] = useState("");
   const [addr, setAddr] = useState("");
+  const [fp, setFp] = useState<"" | "code">("");
+  const [code, setCode] = useState("");
 
   const act = async (body: any, ok: string) => {
     setBusy(true);
@@ -74,6 +76,17 @@ export function SettingsPanel({ say, notify, account }: { say: Say; notify?: Rea
       </div>
       </div>
 
+      <div className="mhead">Preferences</div>
+      <div className="card">
+        <div className="title">Default currency</div>
+        <div className="sub" style={{ marginBottom: 8 }}>Used to show your balance and as the default when you pay in a shop.</div>
+        <div className="seg" style={{ marginBottom: 0 }}>
+          {(["tfuel", "usdt"] as const).map((c) => (
+            <button key={c} className={a.cur === c ? "on" : ""} disabled={busy} onClick={async () => { if (await act({ action: "setCur", cur: c }, "Currency saved")) onCur?.(c); }}>{c === "tfuel" ? "TFUEL" : "USDT"}</button>
+          ))}
+        </div>
+      </div>
+
       <div className="mhead">Security</div>
       <div className="card">
       <div className="row" style={{ alignItems: "flex-start" }}>
@@ -93,7 +106,27 @@ export function SettingsPanel({ say, notify, account }: { say: Say; notify?: Rea
         <button className="btn" disabled={busy || pin.length < 4 || (a.pin && cur.length < 4)} onClick={async () => { if (await act({ action: "setPin", pin, current: cur }, a.pin ? "PIN changed" : "PIN is on")) { setPin(""); setCur(""); } }}>{a.pin ? "Change PIN" : "Turn on PIN"}</button>
         {a.pin && <button className="btn sec" disabled={busy || cur.length < 4} onClick={async () => { if (await act({ action: "removePin", current: cur }, "PIN turned off")) setCur(""); }}>Turn off</button>}
       </div>
-      <div className="xs muted" style={{ marginTop: 6 }}>Forgot your PIN? Contact support and an admin can reset it.</div>
+      {a.pin && fp === "" && <button className="btn ghost sm" style={{ marginTop: 8 }} onClick={async () => { if (await act({ action: "pinResetRequest" }, "We sent a 6-digit code to your Telegram")) setFp("code"); }}>Forgot your PIN?</button>}
+      {a.pin && fp === "code" && (
+        <div style={{ marginTop: 10 }}>
+          <label>6-digit code from Telegram</label>
+          <input inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
+          <label>New PIN (4–6 digits)</label>
+          <input type="password" inputMode="numeric" maxLength={6} autoComplete="new-password" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))} />
+          <button className="btn block" style={{ marginTop: 10 }} disabled={busy || code.length !== 6 || pin.length < 4} onClick={async () => { if (await act({ action: "pinResetConfirm", code, pin }, "PIN reset")) { setFp(""); setCode(""); setPin(""); } }}>Reset PIN</button>
+        </div>
+      )}
+      </div>
+
+      <div className="card">
+        <div className="row">
+          <div><div className="title">Login alerts</div><div className="sub">Get a Telegram message when your account is opened on a new device.</div></div>
+          <button className={`switch ${a.login_alert ? "on" : ""}`} disabled={busy} aria-label="Toggle login alerts" style={{ flexShrink: 0 }} onClick={() => act({ action: "setLoginAlert", on: !a.login_alert }, a.login_alert ? "Login alerts off" : "Login alerts on")} />
+        </div>
+        {a.devices.length > 0 && <div className="title" style={{ fontSize: 13, margin: "12px 0 4px" }}>Recent devices</div>}
+        {a.devices.map((d, i) => (
+          <div className="hist" key={i}><div><div className="title" style={{ fontSize: 14 }}>{d.label}</div><div className="sub">Last used {new Date(d.last).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</div></div></div>
+        ))}
       </div>
 
       <div className="mhead">Saved addresses</div>

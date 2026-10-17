@@ -5,7 +5,8 @@ import Logo from "@/components/Logo";
 import Icon from "@/components/Icons";
 import Market from "@/components/Market";
 import { DepositPage, WithdrawPage, DepositHistory, PayoutHistory, PageHead } from "@/components/Cashier";
-import { Bell, Onboarding } from "@/components/Inbox";
+import { Bell, Onboarding, CurrencyPick } from "@/components/Inbox";
+import { PaySheet, ShopsPage, SupportPage, InviteCard } from "@/components/Shops";
 import { SettingsPanel, useAccount, PinField, AddrPicker } from "@/components/Settings";
 import { BoostTab, DailyCard } from "@/components/Growth";
 import { SpinCard, PromoCard, AdBonus, AdRefill, Leaderboard, InAppAds } from "@/components/Engage";
@@ -23,7 +24,8 @@ interface Me {
   price?: number | null;
   unread?: number;
   showIntro?: boolean;
-  cfg: { minWithdraw: number; methods: string[]; coinsPerUnit: number; unitLabel: string; withdrawEnabled: boolean; coinsPerTfuel: number };
+  cur?: "tfuel" | "usdt" | null;
+  cfg: { minWithdraw: number; methods: string[]; coinsPerUnit: number; unitLabel: string; withdrawEnabled: boolean; coinsPerTfuel: number; shops?: boolean };
 }
 interface Task {
   id: string;
@@ -67,6 +69,7 @@ export default function Home() {
   const [toast, setToast] = useState<{ t: string; ok: boolean } | null>(null);
   const [floats, setFloats] = useState<{ id: number; x: number }[]>([]);
   const [noTg, setNoTg] = useState(false);
+  const [payId, setPayId] = useState<string | null>(null);
 
   const balance = useRef(0);
   const energy = useRef(0);
@@ -103,6 +106,7 @@ export default function Home() {
     }
     w.ready();
     w.expand();
+    try { const sp = String(w.initDataUnsafe?.start_param || ""); if (/^pay_[\w-]{1,64}$/.test(sp)) setPayId(sp.slice(4)); } catch {}
     try {
       w.setHeaderColor?.("#f4f6fb");
       w.setBackgroundColor?.("#f4f6fb");
@@ -288,9 +292,11 @@ export default function Home() {
       {tab === "boost" && <BoostTab cpt={cpt} price={me.price || 0} say={say} reload={load} />}
       {tab === "tfuel" && <Market key={mkSub || "m"} startSub={mkSub} say={say} reload={load} cpt={cpt} />}
       {tab === "tasks" && <TasksWrap me={me} cpt={cpt} say={say} reload={load} />}
-      {tab === "profile" && <Profile me={me} cpt={cpt} balance={bal} go={go} say={say} reload={load} />}
+      {tab === "profile" && <Profile me={me} cpt={cpt} balance={bal} go={go} say={say} reload={load} onCur={(c) => setMe((m) => (m ? { ...m, cur: c } : m))} />}
 
       <InAppAds />
+      {payId && <PaySheet id={payId} cpt={cpt} say={say} reload={load} onClose={() => setPayId(null)} />}
+      {!me.showIntro && me.cur === null && !payId && <CurrencyPick onDone={(c) => setMe((m) => (m ? { ...m, cur: c } : m))} />}
       {me.showIntro && <Onboarding onDone={() => setMe((m) => (m ? { ...m, showIntro: false } : m))} />}
       <div className="nav">
         <div className="nav-in">
@@ -492,8 +498,8 @@ function Tasks({ me, cpt, say, reload }: { me: Me; cpt: number; say: Say; reload
       <div className="section">
         <h2>Quick tasks</h2>
       </div>
-      {me.tasks.length === 0 && <div className="card empty">No tasks right now.</div>}
-      {me.tasks.map((t) => {
+      {me.tasks.filter((t) => !t.done).length === 0 && <div className="card empty">No tasks right now.</div>}
+      {me.tasks.filter((t) => !t.done).map((t) => {
         const st = started[t.id];
         const wait = (t.min_wait_seconds || 10) * 1000;
         const left = st ? Math.max(0, Math.ceil((st + wait - now) / 1000)) : 0;
@@ -542,9 +548,9 @@ function Tasks({ me, cpt, say, reload }: { me: Me; cpt: number; say: Say; reload
 }
 
 /** Profile: balance in TFUEL + USDT value, shortcuts, optional legacy payout methods, history */
-type Page = null | "deposit" | "deposits" | "withdraw" | "payouts" | "assets" | "history" | "settings" | "other";
+type Page = null | "deposit" | "deposits" | "withdraw" | "payouts" | "assets" | "history" | "settings" | "other" | "shops" | "support";
 
-function Profile({ me, cpt, balance, go, say, reload }: { me: Me; cpt: number; balance: number; go: (t: Tab, sub?: string) => void; say: Say; reload: () => void }) {
+function Profile({ me, cpt, balance, go, say, reload, onCur }: { me: Me; cpt: number; balance: number; go: (t: Tab, sub?: string) => void; say: Say; reload: () => void; onCur: (c: "tfuel" | "usdt") => void }) {
   const [page, setPage] = useState<Page>(null);
   const [from, setFrom] = useState<Page>(null);
   const [w, setW] = useState<Wallet | null>(null);
@@ -567,7 +573,9 @@ function Profile({ me, cpt, balance, go, say, reload }: { me: Me; cpt: number; b
   if (page === "deposits") return <DepositHistory say={say} onBack={back} />;
   if (page === "withdraw") return <WithdrawPage say={say} reload={refresh} onBack={back} onHistory={() => nav("payouts", "withdraw")} />;
   if (page === "payouts") return <PayoutHistory say={say} onBack={back} legacy={me.withdrawals} cpt={cpt} fmtTf={fmtTf} />;
-  if (page === "settings") return <SettingsPage say={say} onBack={back} userId={me.user.id} />;
+  if (page === "shops") return <ShopsPage say={say} onBack={back} cpt={cpt} />;
+  if (page === "support") return <SupportPage say={say} onBack={back} />;
+  if (page === "settings") return <SettingsPage say={say} onBack={back} userId={me.user.id} onCur={onCur} />;
   if (page === "other") return (<><PageHead title="Other payout methods" onBack={back} /><LegacyWithdraw me={me} cpt={cpt} balance={balance} say={say} reload={refresh} /></>);
   if (page === "assets") return (<><PageHead title="Portfolio & assets" onBack={back} />{w ? <AssetsPage w={w} balance={balance} cpt={cpt} go={go} /> : <div className="card empty">Loading…</div>}</>);
   if (page === "history") return (<><PageHead title="Transaction history" onBack={back} />{w ? <div className="card"><ActivityList first={w.activity} cpt={cpt} /></div> : <div className="card empty">Loading…</div>}</>);
@@ -593,8 +601,17 @@ function Profile({ me, cpt, balance, go, say, reload }: { me: Me; cpt: number; b
 
       <div className="balance-card" style={{ marginTop: 0 }}>
         <div className="lbl">Total balance</div>
-        <div className="amt num"><Logo size={32} />{T(tf)}<span className="unit">TFUEL</span></div>
-        <div className="eq num">≈ {fmtUsd(tfUsd)} USDT{usdt > 0 ? ` · + ${fmtUsd(usdt)} USDT cash` : ""}</div>
+        {me.cur === "usdt" ? (
+          <>
+            <div className="amt num"><Logo kind="usdt" size={32} />{fmtUsd(tfUsd + usdt)}<span className="unit">USDT</span></div>
+            <div className="eq num">{T(tf)} TFUEL{usdt > 0 ? ` + ${fmtUsd(usdt)} USDT cash` : ""}</div>
+          </>
+        ) : (
+          <>
+            <div className="amt num"><Logo size={32} />{T(tf)}<span className="unit">TFUEL</span></div>
+            <div className="eq num">≈ {fmtUsd(tfUsd)} USDT{usdt > 0 ? ` · + ${fmtUsd(usdt)} USDT cash` : ""}</div>
+          </>
+        )}
       </div>
 
       <div className="grid3b">
@@ -614,6 +631,8 @@ function Profile({ me, cpt, balance, go, say, reload }: { me: Me; cpt: number; b
       <div className="mhead">Account</div>
       <div className="menu">
         {me.cfg.methods.length > 0 && <Row icon="gift" t="Other payout methods" s="Withdraw TFUEL to other accounts" onClick={() => nav("other")} />}
+        {me.cfg.shops && <Row icon="gift" t="Partner shops" s="Sign in automatically and pay with TFUEL or USDT" onClick={() => nav("shops")} />}
+        <Row icon="info" t="Help & support" s="Message us and see replies" onClick={() => nav("support")} />
         <Row icon="settings" t="Settings" s="Appearance, security, addresses, notifications" onClick={() => nav("settings")} />
       </div>
     </>
@@ -679,15 +698,15 @@ function LegacyWithdraw({ me, cpt, balance, say, reload }: { me: Me; cpt: number
 }
 
 /** Settings page: everything in labelled sections */
-function SettingsPage({ say, onBack, userId }: { say: Say; onBack: () => void; userId: string }) {
+function SettingsPage({ say, onBack, userId, onCur }: { say: Say; onBack: () => void; userId: string; onCur: (c: "tfuel" | "usdt") => void }) {
   return (
     <>
       <PageHead title="Settings" onBack={onBack} />
-      <SettingsPanel say={say} notify={<NotifyToggle />} account={
-        <div className="row">
+      <SettingsPanel say={say} onCur={onCur} notify={<NotifyToggle />} account={
+        <><InviteCard say={say} /><div className="row" style={{ marginTop: 14 }}>
           <div><div className="title">Your ID</div><div className="sub num">{userId}</div></div>
           <button className="btn sec sm" onClick={() => { navigator.clipboard?.writeText(userId); say("ID copied", true); }}><Icon name="copy" size={14} /></button>
-        </div>
+        </div></>
       } />
     </>
   );
@@ -792,6 +811,7 @@ function AssetsPage({ w, balance, cpt, go }: { w: Wallet; balance: number; cpt: 
           <button className="btn sec" onClick={() => go("boost")}>Boost &amp; Stake</button>
           <button className="btn sec" onClick={() => go("tfuel", "orders")}>Orders &amp; alerts</button>
         </div>
+
     </div>
   );
 }

@@ -33,6 +33,7 @@ export interface Settings {
   binance_id_enabled: boolean; // Binance ID (internal / Pay transfer) দিয়ে deposit
   binance_id: string; // তোমার Binance Pay ID / UID
   binance_id_min: number;
+  shops_enabled: boolean; // partner shop-এ খরচ
   stars_enabled: boolean; // Telegram Stars দিয়ে deposit
   stars_per_usdt: number; // ১ USDT = কত Stars
   stars_min_usdt: number;
@@ -103,6 +104,7 @@ export const DEFAULTS: Settings = {
   binance_id_enabled: false,
   binance_id: "",
   binance_id_min: 1,
+  shops_enabled: false,
   stars_enabled: false,
   stars_per_usdt: 77,
   stars_min_usdt: 1,
@@ -294,6 +296,7 @@ export function parseSettings(b: any, cur: Settings): Settings {
     binance_id_enabled: bool("binance_id_enabled"),
     binance_id: (() => { const v = str(b.binance_id, 20, cur.binance_id); if (v && !/^\d{5,20}$/.test(v)) throw new HttpError(400, "Binance ID must be digits only"); return v; })(),
     binance_id_min: num(b.binance_id_min, "binance_id_min", 0.01, 1e6, cur.binance_id_min),
+    shops_enabled: bool("shops_enabled"),
     stars_enabled: bool("stars_enabled"),
     stars_per_usdt: num(b.stars_per_usdt, "stars_per_usdt", 1, 100000, cur.stars_per_usdt),
     stars_min_usdt: num(b.stars_min_usdt, "stars_min_usdt", 0.01, 1e5, cur.stars_min_usdt),

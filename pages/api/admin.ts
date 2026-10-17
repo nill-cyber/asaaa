@@ -3,6 +3,9 @@ import { route } from "@/lib/api";
 import { db } from "@/lib/firebase";
 import { ServerValue } from "firebase-admin/database";
 import { ArticleSite, normUrl } from "@/lib/chain";
+import { sortableId, randomToken } from "@/lib/crypto";
+import { seal } from "@/lib/secretbox";
+import { refundOrder } from "@/lib/shop";
 import { adminLog, dayKey } from "@/lib/log";
 import { getSettings, invalidateSettings, parseSettings } from "@/lib/settings";
 import { tgCall, webhookSecret } from "@/lib/telegram";
@@ -352,6 +355,113 @@ export default route(async (req, res) => {
       const p = await getPrice(st, true);
       const live = p?.override ? await getPrice({ ...st, price_override: 0 }, true) : p;
       return void res.json({ success: true, price: p, live });
+    }
+
+    case "supportList": {
+      const items = (await recent("tickets", 200)).map((x: any) => ({ id: x.id, uid: x.uid, name: x.name, subject: x.subject, status: x.status, updated_at: x.updated_at, created_at: x.created_at, n: Object.keys(x.msgs || {}).length }));
+      return void res.json({ success: true, items: items.sort((a: any, b: any) => b.updated_at - a.updated_at) });
+    }
+    case "supportGet": {
+      const id = String(b.id || "");
+      if (!idRe.test(id)) throw new HttpError(400, "Invalid id");
+      const x = (await db().ref(`tickets/${id}`).get()).val();
+      if (!x) throw new HttpError(404, "Ticket not found");
+      return void res.json({ success: true, ticket: { id, uid: x.uid, name: x.name, subject: x.subject, status: x.status, msgs: Object.values(x.msgs || {}).sort((a: any, c: any) => a.at - c.at) } });
+    }
+    case "supportReply":
+    case "supportClose": {
+      const id = String(b.id || "");
+      if (!idRe.test(id)) throw new HttpError(400, "Invalid id");
+      const x = (await db().ref(`tickets/${id}`).get()).val();
+      if (!x) throw new HttpError(404, "Ticket not found");
+      const now = Date.now();
+      const upd: Record<string, any> = {};
+      let status = "closed";
+      if (action === "supportReply") {
+        const text = clean(b.message, 1000);
+        if (text.length < 2) throw new HttpError(400, "Write a reply");
+        upd[`tickets/${id}/msgs/${sortableId()}`] = { f: "admin", t: text, at: now };
+        status = "answered";
+      }
+      upd[`tickets/${id}/status`] = status;
+      upd[`tickets/${id}/updated_at`] = now;
+      upd[`user_tickets/${x.uid}/${id}/status`] = status;
+      upd[`user_tickets/${x.uid}/${id}/updated_at`] = now;
+      await db().ref().update(upd);
+      await notify(x.uid, action === "supportReply" ? `💬 Support replied to "${x.subject}". Open Profile → Support to read it.` : `Your support ticket "${x.subject}" was closed.`);
+      await adminLog(who, action === "supportReply" ? "support_reply" : "support_close", { id, uid: x.uid });
+      return void res.json({ success: true });
+    }
+
+    case "shopList": {
+      const shops = ((await db().ref("shops").get()).val() || {}) as Record<string, any>;
+      const st = await getSettings(true);
+      return void res.json({ success: true, enabled: st.shops_enabled, shops: Object.entries(shops).map(([id, x]) => ({ id, name: x.name, domain: x.domain, login_url: x.login_url, webhook: x.webhook || "", enabled: !!x.enabled, fee_pct: x.fee_pct, allow_tfuel: !!x.allow_tfuel, allow_usdt: !!x.allow_usdt, max_usd: x.max_usd, created_at: x.created_at })) });
+    }
+    case "shopSave": {
+      const name = clean(b.name, 40);
+      if (name.length < 2) throw new HttpError(400, "Shop name is required");
+      let origin = "";
+      try { const uo = new URL(String(b.domain || "").trim()); if (uo.protocol !== "https:") throw 0; origin = uo.origin; } catch { throw new HttpError(400, "Domain must be a full https:// address, e.g. https://myshop.com"); }
+      let login = clean(b.login_url, 300) || origin + "/auth/tfuel";
+      if (!login.startsWith(origin + "/")) throw new HttpError(400, "Login URL must be on the shop's domain");
+      let hook = clean(b.webhook, 300);
+      if (hook && !/^https:\/\//.test(hook)) throw new HttpError(400, "Webhook URL must start with https://");
+      const fee = Number(b.fee_pct), max = Number(b.max_usd);
+      if (!Number.isFinite(fee) || fee < 0 || fee > 50) throw new HttpError(400, "Fee must be 0–50%");
+      if (!Number.isFinite(max) || max < 1 || max > 100000) throw new HttpError(400, "Max order must be 1–100000 USD");
+      if (!b.allow_tfuel && !b.allow_usdt) throw new HttpError(400, "Allow at least one currency");
+      const rec: Record<string, any> = { name, domain: origin, login_url: login, webhook: hook, fee_pct: fee, max_usd: max, allow_tfuel: !!b.allow_tfuel, allow_usdt: !!b.allow_usdt, enabled: b.enabled !== false };
+      let id = String(b.id || "");
+      let secret = "";
+      if (id) {
+        if (!idRe.test(id) || !(await db().ref(`shops/${id}`).get()).exists()) throw new HttpError(404, "Shop not found");
+        await db().ref(`shops/${id}`).update(rec);
+      } else {
+        id = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 20) + "-" + randomToken().slice(0, 5);
+        secret = "tfs_" + randomToken() + randomToken();
+        await db().ref(`shops/${id}`).set({ ...rec, secret: seal(secret), created_at: Date.now() });
+      }
+      await adminLog(who, "shop_saved", { id, name });
+      return void res.json({ success: true, id, secret });
+    }
+    case "shopRotate": {
+      const id = String(b.id || "");
+      if (!idRe.test(id) || !(await db().ref(`shops/${id}`).get()).exists()) throw new HttpError(404, "Shop not found");
+      const secret = "tfs_" + randomToken() + randomToken();
+      await db().ref(`shops/${id}/secret`).set(seal(secret));
+      await adminLog(who, "shop_secret_rotated", { id });
+      return void res.json({ success: true, secret });
+    }
+    case "shopDelete": {
+      const id = String(b.id || "");
+      if (!idRe.test(id)) throw new HttpError(400, "Invalid id");
+      await db().ref(`shops/${id}`).remove();
+      await adminLog(who, "shop_deleted", { id });
+      return void res.json({ success: true });
+    }
+    case "shopToggleAll": {
+      await db().ref("settings/shops_enabled").set(!!b.on);
+      invalidateSettings();
+      await adminLog(who, "shops_toggle", { on: !!b.on });
+      return void res.json({ success: true });
+    }
+    case "shopOrders": {
+      const items = await recent("shop_orders", 300);
+      const shops = ((await db().ref("shops").get()).val() || {}) as Record<string, any>;
+      const sum: Record<string, { paid: number; fee: number; refunded: number; n: number }> = {};
+      for (const o of items) {
+        const s0 = (sum[o.shop] = sum[o.shop] || { paid: 0, fee: 0, refunded: 0, n: 0 });
+        if (o.status === "paid") { s0.paid += fromU(o.usd_u); s0.fee += fromU(o.fee_u || 0); s0.n++; }
+        if (o.status === "refunded") s0.refunded += fromU(o.usd_u);
+      }
+      return void res.json({ success: true, items: items.map((o: any) => ({ id: o.id, shop: o.shop, shop_name: shops[o.shop]?.name || o.shop, ref: o.ref, title: o.title, usd: fromU(o.usd_u), status: o.status === "open" && o.exp < Date.now() ? "expired" : o.status, cur: o.cur || null, coins: o.coins || 0, usdt: fromU(o.usdt_u || 0), fee: fromU(o.fee_u || 0), uid: o.paid_by || o.uid || "", created_at: o.created_at, paid_at: o.paid_at || 0, webhook_ok: o.webhook_ok })), totals: Object.entries(sum).map(([id, v]) => ({ id, name: shops[id]?.name || id, ...v, owed: v.paid - v.fee })) });
+    }
+    case "shopRefund": {
+      const id = String(b.id || "");
+      if (!idRe.test(id)) throw new HttpError(400, "Invalid id");
+      await refundOrder(id, who);
+      return void res.json({ success: true });
     }
 
     case "deposits":

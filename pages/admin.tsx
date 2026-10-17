@@ -4,9 +4,10 @@ import { api, tg } from "@/lib/client";
 import { BRAND } from "@/lib/brand";
 import Logo from "@/components/Logo";
 import Icon, { IconName } from "@/components/Icons";
+import { ShopsPage, SupportPage } from "@/components/AdminShops";
 import EngagePage from "@/components/AdminEngage";
 
-type Tab = "rewards" | "dashboard" | "users" | "sites" | "tasks" | "withdrawals" | "usdt" | "market" | "fraud" | "settings" | "channel" | "logs" | "engage";
+type Tab = "shops" | "support" | "rewards" | "dashboard" | "users" | "sites" | "tasks" | "withdrawals" | "usdt" | "market" | "fraud" | "settings" | "channel" | "logs" | "engage";
 const NAV: [Tab, string, IconName][] = [
   ["dashboard", "Dashboard", "grid"],
   ["users", "Users", "users"],
@@ -16,6 +17,8 @@ const NAV: [Tab, string, IconName][] = [
   ["rewards", "Rewards & Plans", "gift"],
   ["usdt", "USDT desk", "download"],
   ["market", "Market & Trading", "trend"],
+  ["shops", "Shops", "gift"],
+  ["support", "Support", "megaphone"],
   ["engage", "Engagement", "zap"],
   ["fraud", "Fraud monitor", "shield"],
   ["settings", "Settings", "settings"],
@@ -163,6 +166,8 @@ export default function Admin() {
           {tab === "rewards" && <RewardsPage call={call} />}
           {tab === "usdt" && <UsdtDesk call={call} />}
           {tab === "market" && <MarketPage call={call} />}
+          {tab === "shops" && <ShopsPage call={call} />}
+          {tab === "support" && <SupportPage call={call} />}
           {tab === "engage" && <EngagePage call={call} />}
           {tab === "fraud" && <Fraud call={call} />}
           {tab === "settings" && <SettingsPage call={call} />}
